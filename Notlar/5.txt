@@ -1,0 +1,38 @@
+# ZeruX OS — Unified Phase 5 Implementation Plan (Updated)
+# VESA Performans ve Hızlandırma Planı (Caching & Write-Combining)
+## Phase 0: Pre-requisites & Blocker Fixes (COMPLETED ✅)
+- `syscall_asm.asm` ES/FS/GS leak patched.
+- `task.c` PID collision and `kzalloc` fixed.
+- `boot.asm` kernel sector overlap fixed.
+- `procfs.c` live PMM meminfo implemented.
+- `fat32.c` cluster chain + subdirectory support rewritten.
+Sistemin yavaş ve ağır hissedilmesinin (ekran yenilenirken veya klavyede yazı yazarken "kare kare" gelmesi) kök nedeni, x86 mimarisinde Framebuffer bellek yönetiminin (Paging) yanlış yapılandırılmasıdır. 
+---
+Şu anki kodda VESA Framebuffer belleğe haritalanırken `CACHE_DISABLE` (Önbellek Kapat) bayrağı kullanılıyor. Bu durum, CPU'nun her bir pikseli çizerken veya terminali kaydırırken aradaki önbellekleri (L1/L2 Cache ve Write-combining buffer) atlayarak **doğrudan fiziksel PCI veriyoluna (bus)** yazmasına sebep olur. Sadece bir satır kaydırmak için 3 MB veri fiziksel veriyolundan gönderildiği için sistem donukluk yaşar.
+## Column A: Hardware, Graphics & UI Track
+### 5.1 PCI Bus Scanner (DONE ✅)
+- `pci_config_read32` / `pci_config_write32` via `0xCF8` / `0xCFC`.
+- Full scan: buses 0-255, devices 0-31, functions 0-7.
+- **5.1.6 [NEW - Critical]** BAR SIZE PROBING: Write `0xFFFFFFFF` to each BAR register, read back, mask lower bits, take bitwise NOT → real size. Restore original value. Without this VBE mapping will be wrong size.
+- `ls-pci` shell command.
+- `pci_find_device(vendor, device)` lookup.
+### 5.2 RTC / CMOS Driver (DONE ✅)
+- CMOS register read via `0x70` / `0x71`.
+- BCD → binary conversion with update-in-progress guard (reg `0x0A` bit 7).
+- Double-read verification to avoid torn reads.
+- `date` shell command.
+### 5.3 VBE / VESA Linear Framebuffer
+- Bochs/QEMU VBE Dispi Interface via ports `0x1CE` / `0x1D0`.
+- Set 1024x768x32bpp and enable LFB.
+- `pci_find_device(0x1234, 0x1111)` to get BAR0 = framebuffer physical address.
+- **5.3b [NEW - Critical]** EXPLICIT VMM MAPPING: `vmm_init()` identity maps only up to ~32 MB. The VBE BAR0 is well above this. Must explicitly call `vmm_map_page()` for every framebuffer page (total = `width * height * 4` bytes). Without this, first `put_pixel` → #PF.
+- Graphics primitives: `put_pixel`, `fill_rect`, `draw_rect`, `draw_line`.
+- 8x16 bitmap font embedded as `font8x16.h`.
+- `draw_char()` and `draw_string()`.
+- Text-mode fallback if VBE detection fails.
+### 5.4 PS/2 Mouse Driver
+- IRQ12 handler registered in IDT.
+- 8042 controller init: send `0xA8` (enable aux port), `0xF4` (data reporting).
+- 3-byte packet parsing with byte0 bit3 sync check.
+- X/Y delta → global cursor position (clamped to screen bounds).
+- **5.4.7 [NEW - Important]** SAVE-RESTORE CURSOR BACKGROUND: Before drawing cursor, save the pixels beneath it into a small buffer. On cursor move: restore saved pixels, save new position's pixels, draw cursor there. Otherwise cursor movement erases text/graphics under it.

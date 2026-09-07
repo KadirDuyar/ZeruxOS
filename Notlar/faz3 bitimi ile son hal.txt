@@ -1,0 +1,153 @@
+# 🏛️ ZeruX Operating System — Detaylı Mimarî & Gelişim Raporu
+
+**ZeruX OS**, 32-bit x86 (IA-32) korumalı modunda (Protected Mode) çalışan, sıfırdan geliştirilmiş, donanım düzeyinde güvenlik kalkanlarına, sanal bellek yönetimine, donanımsal time-slicing multitasking yapısına ve sistem çağrı motoruna sahip gerçek bir mikroçekirdek (educational/research kernel) mimarisidir.
+
+Şu an itibarıyla **Faz 1, Faz 2 ve Faz 3 %100 eksiksiz olarak tamamlanmıştır.**
+
+---
+
+## 📐 Faz 1 — Çekirdek Altyapısı ve Donanım Soyutlama Katmanı (HAL)
+
+### 1.1 Bootloader ve Korumalı Mod (Protected Mode Geçişi)
+- **Mantık & Mimarî:** BIOS bilgisayarı başlattığında diskin ilk 512 baytlık önyükleme sektörünü (Master Boot Record - MBR) `0x7C00` adresine yükler. `bootloader/boot.asm` kodu donanımsal A20 hattını açarak 1 MB üzerindeki belleğe erişimi aktif eder.
+- **Korumalı Moda Geçiş:** Donanımsal 32-bit Korumalı Moda geçmek için `CR0` kontrol yazmacının `PE` (Protection Enable - Bit 0) biti `1` yapılır. Ardından Far Jump (`jmp 0x08:pm_entry`) yapılarak CPU pipeline temizlenir ve çekirdek `0x00100000` (1 MB) fiziksel adresine yüklenip C `kernel_main` fonksiyonuna zıplanır.
+
+### 1.2 Seri Port Sürücüsü (UART 16550 COM1 @ 0x3F8)
+- **Mantık & Mimarî:** Çekirdeğin ekran sürücüleri (VGA) henüz kurulmadan önce bile sistemin durumunu donanımsal olarak izlemek için **UART 16550 Serial Chip (COM1)** sürücüsü yazılmıştır.
+- **Konfigürasyon:** I/O portları (`inb`/`outb`) kullanılarak baud hızı 38400 (Divisor Latch 3), veri formatı 8N1 (8 Bit, No Parity, 1 Stop Bit) ayarlanmış ve FIFO önbellekleri aktifleştirilmiştir. `serial_printf` fonksiyonu tam formatlı string (`%s`, `%d`, `%x`, `%p`, `%u`) basma yeteneğine sahiptir.
+
+### 1.3 IDT (Interrupt Descriptor Table) ve ISR (Interrupt Service Routines)
+- **Mantık & Mimarî:** İşlemci bir sıfıra bölünme hatası (`#DE`), sayfa hatası (`#PF`) veya genel koruma ihlali (`#GP`) ürettiğinde bu hatayı yakalamak için 256 kapılık **IDT Tablosu** kurulmuştur.
+- **Exception Handlers (ISR 0..31):** Donanım veya stub tarafından push edilen register durumu `registers_t` yapısına aktarılır. Herhangi bir çökmede işlemcinin yazmaçlarını (`EAX`, `EBX`, `CR0`, `CR2`, `EIP`, `CS`, `ESP`, `EFLAGS`) renkli ve detaylı bir **Kernel Panic** ekranı olarak seri porta döküm yapar.
+
+### 1.4 8259A PIC (Programmable Interrupt Controller) & IRQ Sürücüleri
+- **Mantık & Mimarî:** x86 donanımında BIOS kesme numaraları (0..15) CPU exception numaralarıyla (0..31) çakışır. **8259A Master & Slave PIC** çipleri remapping yapılarak donanımsal kesmeler IRQ 0..15 -> IDT 32..47 aralığına taşınmıştır.
+- **EOI (End-Of-Interrupt) Kritik Sıralama Mantığı:**Donanım kesmesi işlenirken `pic_send_eoi(irq)` sinyali sürücü callback'i çalıştırılmadan **ÖNCE** gönderilir. Aksi halde bağlam takasında (`switch_to`) stack değiştiğinde EOI atlanacağı için PIC çipi kilitlenir.
+
+### 1.5 Donanım Sürücüleri: PIT Timer (100 Hz) & PS/2 Klavye
+- **Programmable Interval Timer (PIT 8254 Channel 0):** İşlemciye her 10 milisaniyede bir (`100 Hz`) donanımsal IRQ0 kesmesi gönderir. Sistem uptime süresi ve multitasking zaman dilimleri (time-slicing) bu timer üzerinden yürütülür.
+- **PS/2 Keyboard (IRQ1):** Klavye tuş basımlarını yakalar ve dairesel önbelleğe (circular char buffer) yazar.
+
+---
+
+## 🧠 Faz 2 — Bellek Yönetim Sistemi (Memory Management)
+
+```
+       +-------------------------------------------------------+
+       |               ZeruX Memory Architecture               |
+       +-------------------------------------------------------+
+       | 0x00000000 -> 0x01FE0000 (31 MB Usable RAM via E820) |
+       +-------------------------------------------------------+
+       | [PMM] Bitmap Allocator (1 KB Bitmap for 8160 Pages)   |
+       +-------------------------------------------------------+
+       | [VMM] 2-Level Paging (Page Directory CR3 & 1024 PTEs) |
+       +-------------------------------------------------------+
+       | [KHEAP] Free-List Allocator (Splitting & Coalescing)  |
+       +-------------------------------------------------------+
+```
+
+### 2.1 BIOS E820 Fiziksel Bellek Haritası
+- **Mantık:** BIOS'un `INT 0x15, AX=0xE820` çağrısı üzerinden sistemdeki tüm RAM alanları taranır. Kullanılabilir (Usable RAM - Type 1) ve Ayrılmış (Reserved - Type 2/3) bölgeler tespit edilir. ZeruX OS gerçek kullanılabilir belleği (31 MB / 8160 Sayfa Çerçevesi) tam isabetle hesaplar.
+
+### 2.2 Fiziksel Bellek Yöneticisi (PMM - Physical Memory Manager)
+- **Kullanılan Algoritma:** **Bitmap Allocator (Bit Haritası Tahsisçisi)** & **First-Fit Free Bit Search**.
+- **Nasıl Çalışır:** Sistemdeki her 4 KB'lık fiziksel sayfa (Page Frame) 1 bit ile temsil edilir (`0 = BOŞ`, `1 = DOLU`). 31 MB RAM için sadece **1 KB'lık (8160 bit)** yer kaplayan ultra hafif bir bitmap kullanılır.
+- **Karmaşıklık:** `pmm_alloc_block()` bitmap üzerinde ilk `0` olan biti (First-Fit) arar ve `base + index * 4096` adresini döner. `pmm_free_block(addr)` biti anında sıfırlar ($O(1)$ serbest bırakma).
+
+### 2.3 Sanal Bellek Yöneticisi (VMM - Virtual Memory Manager / Paging)
+- **Kullanılan Algoritma:** **x86 2-Seviyeli Donanımsal Sayfalama (Two-Level Paging Architecture)**.
+- **Adres Çözümleme Mantığı:** 32-bit sanal adres 3 parçaya bölünür:
+  - `[31:22]` Page Directory Index (1024 PDE kaydı)
+  - `[21:12]` Page Table Index (1024 PTE kaydı)
+  - `[11:0]` 4 KB Sayfa İçi Offset
+- **CR3 & TLB Flush:** `CR3` yazmacına Page Directory fiziksel adresi yüklenir, `CR0.PG` (Bit 31) açılarak donanımsal sayfalama aktif edilir. `vmm_map_page` çağrılarından sonra `invlpg` komutuyla donanımsal TLB önbelleği yenilenir.
+- **User Bit (`VMM_FLAG_USER` = 0x04):** Sanal sayfaların PDE ve PTE girdilerine `USER` biti eklenerek Ring 3 uygulamalarının bellek erişim izinleri düzenlenmiştir.
+
+### 2.4 Çekirdek Heap Tahsisçisi (KHEAP - Kernel Heap Allocator)
+- **Kullanılan Algoritma:** **Free-List Allocator with Splitting & Bidirectional Coalescing (Bölmeli ve İki Yönlü Birleştirmeli Serbest Liste Tahsisçisi)**.
+- **Başlık (Header) Yapısı:** Her heap bloğunun önünde 24 baytlık (8-bayt hizalı) `heap_header_t` (`magic`, `size`, `is_free`, `next`, `prev`) bulunur.
+- **Bölme (Splitting):** `kmalloc(size)` çağrıldığında boş listede yeterli büyüklükteki blok bulunur. İstenen boyuttan artan kısım için yeni bir header oluşturulup serbest listeye eklenir.
+- **Birleştirme (Coalescing):** `kfree(ptr)` bloğu `is_free = 1` yapar ve sağındaki/solundaki komşu serbest bloklarla anında birleşir. Böylece **bellek parçalanması (fragmentation)** %100 engellenir.
+
+---
+
+## ⚙️ Faz 3 — Multitasking, İşlem Yönetimi ve Sistem Çağrıları
+
+```
+       +-------------------------------------------------------+
+       |               ZeruX Multitasking Engine               |
+       +-------------------------------------------------------+
+       | [GDT/TSS] 6 Descriptors, Task Register (TR = 0x28)    |
+       +-------------------------------------------------------+
+       | [PCB] Process Control Block (`task_t`) & 4KB KStack   |
+       +-------------------------------------------------------+
+       | [SCHEDULER] Preemptive Round-Robin (10ms Time Slice)  |
+       +-------------------------------------------------------+
+       | [USERMODE] Ring 0 -> Ring 3 Switch via `iret` Frame   |
+       +-------------------------------------------------------+
+       | [SYSCALL] `int 0x80` Engine (sys_write, yield, exit)  |
+       +-------------------------------------------------------+
+       | [REAPER] Zombie Cleanup & Non-Blocking Sleep Queue    |
+       +-------------------------------------------------------+
+```
+
+### 3.1 Dinamik GDT ve Task State Segment (TSS)
+- **GDT Yapısı (6 Descriptors):** Null (`0x00`), Kernel Code (`0x08`), Kernel Data (`0x10`), User Code (`0x18`/`0x1B`), User Data (`0x20`/`0x23`), TSS (`0x28`).
+- **TSS & Donanımsal TR Yazmacı:** `ltr 0x28` komutuyla donanımsal Task Register yüklenmiştir. Ring 3 kullanıcı modundayken bir kesme veya sistem çağrısı geldiğinde, CPU otomatik olarak `TSS.esp0` alanındaki çekirdek stack adresini okuyup oraya sığınır.
+
+### 3.2 Process Control Block (PCB) ve Çekirdek Thread'leri
+- **`task_t` Veri Yapısı:** `pid`, `name`, `state` (`READY`, `RUNNING`, `SLEEPING`, `WAITING`, `ZOMBIE`), `priority`, `time_slice`, `esp`, `ebp`, `eip`, `eflags`, `kernel_stack`, `kernel_stack_top`, `wake_tick`, `exit_code`, `next`, `prev`.
+- **40-Baytlık Trambolin Çerçevesi (Trampoline Frame):** `kthread_create` yeni bir thread oluşturduğunda stack üzerine `EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX, EFLAGS (0x202), EIP` hizalamasında 40 baytlık donanımsal register çerçevesi dizilir.
+
+### 3.3 Preemptive Round-Robin Zamanlayıcı & Context Switch (`switch_to`)
+- **Zamanlama Algoritması:** **Preemptive Round-Robin Scheduling with Time-Slicing (Zaman Dilimli Dairesel Zamanlayıcı)**.
+- **Bağlam Takası (`switch_to`):** Assembly `switch_to(old, next)` fonksiyonu `pushfd` ve `pushad` ile eski görevin register'larını kaydedip ESP'sini saklar, yeni görevin ESP'sini yükler, `popad` ve `popfd` yaparak `ret` ile zıplar.
+- **TSS Güncellemesi:** Her görev değişiminde `tss_set_kernel_stack(next->kernel_stack_top)` çağrılarak `TSS.esp0` yazmacı yeni görevin stack tepesi ile güncellenir.
+
+### 3.4 Ring 0 -> Ring 3 (Kullanıcı Modu) Geçişi ve Güvenlik İhlal Testi
+- **`iret` Stack Hilesi:** İşlemciyi Ring 0'dan Ring 3'e düşürmek için stack üzerine `[SS_user=0x23, ESP_user=ustack, EFLAGS=0x202, CS_user=0x1B, EIP_user=entry]` 5-kelimelik çerçevesi dizilip `iret` çağrılır.
+- **Donanımsal Koruma Testi:** Ring 3 seviyesinden kasıtlı olarak ayrıcalıklı `cli` komutu çalıştırıldığında x86 donanımının anında **General Protection Fault (#GP / ISR 13)** paniği ürettiği canlı olarak kanıtlanmıştır.
+
+### 3.5 Sistem Çağrı Motoru (`int 0x80` Syscall Engine)
+- **IDT Gate 128 (0x80) DPL=3:** Kapı `0xEE` (DPL=3) olarak tanımlandığı için Ring 3 uygulamaları `#GP` almadan donanımsal `int 0x80` çağırabilir.
+- **Syscall Calling Convention:**
+  - `EAX`: Syscall Numarası (`SYS_WRITE=1`, `SYS_GETPID=2`, `SYS_YIELD=3`, `SYS_SLEEP=4`, `SYS_EXIT=5`)
+  - `EBX`: Parametre 1
+  - `ECX`: Parametre 2
+  - `EDX`: Parametre 3
+  - Dönen değer `EAX` yazmacıyla iade edilir.
+
+### 3.6 Task Sonlandırma (`sys_exit`), Zombie Temizleyici & Non-Blocking Sleep
+- **Non-Blocking Sleep Queue (`TASK_STATE_WAITING`):** `user_sleep(ms)` çağıran görev `WAITING` moduna alınır. PIT timer kesmesi uyanma zamanı gelen görevleri `READY` yapar. **CPU asla busy-wait döngüsünde yorulmaz!**
+- **Zombie Reaper (`task_reap_zombies`):** `user_exit(0)` ile `ZOMBIE` olan görevlerin 4 KB stack bellekleri `kfree()` ile sisteme geri kazandırılır.
+
+---
+
+## 🛣️ Gelecek Planı ve Mimarî Yol Haritası (Faz 4 ve Ötesi)
+
+```
+  [TAMAMLANDI] Faz 1: Core Infrastructure (HAL, Serial, GDT, IDT, ISR, PIC, PIT, Keyboard)
+  [TAMAMLANDI] Faz 2: Memory Management (E820, PMM Bitmap, VMM Paging, KHEAP kmalloc/kfree)
+  [TAMAMLANDI] Faz 3: Multitasking & Process Engine (TSS, Preemptive Scheduler, Ring 3, Syscalls, Reaper)
+        │
+        ▼
+  [SIRADAKİ]   Faz 4: Virtual File System (VFS), Initrd / RAMDisk & Shell CLI Interface
+        │
+        ▼
+  [GELECEK]    Faz 5: Executable Loading (ELF32 Parser) & IPC / User Land Applications
+```
+
+### 📁 Faz 4 — Sanal Dosya Sistemi (VFS), RAMDisk & Kabuk (Shell CLI)
+1. **Virtual File System (VFS) Katmanı:** `vfs_node_t` yapısı ile dosya okuma, yazma, açma, kapatma (`open`, `read`, `write`, `close`, `readdir`) soyutlama katmanı.
+2. **Initrd / TAR RAMDisk Sürücüsü:** Çekirdek imajına gömülü geçici bellek dosya sistemi (RAM Disk).
+3. **Kullanıcı Modu Kabuk (ZeruxShell / CLI Interface):** `help`, `clear`, `ls`, `cat`, `meminfo`, `ps`, `kill` komutlarını çalıştıran, kullanıcı etkileşimli terminal arayüzü.
+
+### 🚀 Faz 5 — Çalıştırılabilir Dosya Yükleyici (ELF32 Parser) ve Prosses İletişimi (IPC)
+1. **ELF32 Executable Parser:** Diskteki veya RAMDisk'teki `.elf` çalıştırılabilir dosyalarının header'larını okuyup koda/veriye ayırarak Ring 3 sanal belleğine yükleme.
+2. **IPC (Inter-Process Communication):** Boru hatları (Pipes) ve Sinyal (Signals) mekanizmaları.
+
+---
+
+ZeruX OS projemizde **tüm temel işletim sistemi katmanları (Donanım, Bellek, Multitasking, Güvenlik, Sistem Çağrıları)** %100 doğrulukla kurulmuştur! 
+
+Hazır olduğunuzda **Faz 4: Sanal Dosya Sistemi (VFS) ve RAMDisk** aşamasına geçebiliriz! 🥂✋

@@ -1,0 +1,55 @@
+🧠 Faz 2 — Bellek Yönetimi (Adım Adım)
+Adım 2.0 — BIOS E820 Memory Map
+
+Neden ilk bu: PMM'i kurmadan önce sisteminizde ne kadar RAM olduğunu ve hangi bölgelerin kullanılabilir/rezerve olduğunu bilmeniz lazım. Bu bilgi sadece real mode'da BIOS çağrısıyla alınabilir, protected mode'a geçtikten sonra artık BIOS'a erişemezsiniz. O yüzden bu iş bootloader'da, GDT kurulup protected mode'a geçilmeden önce yapılmalı.
+
+2.0.1 — Bootloader'da INT 15h, EAX=E820h döngüsü yazma (her çağrı bir bellek bölgesi struct'ı döndürür: base address, length, type)
+2.0.2 — Dönen kayıtları (ADDR, LEN, TYPE, ACPI attr) sabit bir bellek adresine (örn. 0x8000 gibi kernel'ın henüz kullanmadığı bir yere) dizi olarak yazma
+2.0.3 — Kayıt sayısını da bir yere (örn. bir sayaç değişkenine) kaydetme
+2.0.4 — Bu bilgiyi kernel'a nasıl aktaracağınızı kararlaştırma — en yaygın yöntem: sabit bir adreste "boot info struct" (memory map pointer + entry count + diğer bilgiler) bırakıp kernel_main()'e bu adresi parametre olarak geçmek
+2.0.5 — Kernel tarafında bu struct'ı okuyup serial_printf ile debug çıktısı alma (her bölgeyi base/length/type olarak yazdırın — bu adımı doğrulamadan devam etmeyin, PMM'in doğruluğu buna bağlı)
+
+⚠️ Dikkat: Bazı BIOS'lar E820'yi desteklemez veya hatalı veri döndürür; carry flag kontrolü ve EAX == 0x534D4150 ("SMAP") kontrolü şart.
+
+Adım 2.1 — Physical Memory Manager (PMM / Bitmap Allocator)
+
+Neden bundan sonra: E820'den gelen ham veriyi kullanılabilir bir yapıya çevirmeniz lazım. Bitmap en basit ve anlaşılır yöntem.
+
+2.1.1 — pmm.h / pmm.c oluşturma
+2.1.2 — Toplam RAM boyutunu E820 verisinden hesaplama (en yüksek adres + length)
+2.1.3 — Bitmap boyutunu hesaplama: toplam_sayfa_sayısı / 8 byte (her bit = 1 sayfa, 4KB)
+2.1.4 — Bitmap'i nereye koyacağınıza karar verme — genelde kernel'ın hemen bittiği yerden sonrasına (linker script'inizdeki _kernel_end sembolünü kullanabilirsiniz)
+2.1.5 — Başlangıçta tüm bellek "used" (dolu) olarak işaretlenir
+2.1.6 — E820'de "usable" (type=1) olarak işaretli bölgeleri bitmap'te "free" yapma
+2.1.7 — Kernel'ın kendi kapladığı fiziksel alanı (0x100000'den kernel_end'e kadar) ve bitmap'in kendisinin kapladığı alanı tekrar "used" olarak işaretleme (çok kritik — yoksa kernel kendi üstüne veri yazar)
+2.1.8 — pmm_alloc_block() — bitmap'te ilk boş biti bulup "used" yapar, o sayfanın fiziksel adresini döndürür
+2.1.9 — pmm_free_block(addr) — ilgili biti "free" yapar
+2.1.10 — pmm_alloc_blocks(count) — ardışık N sayfa lazım olduğunda (opsiyonel ama ileride lazım olacak)
+2.1.11 — Test: birkaç blok alloc edip adreslerini serial'a yazdırın, sonra free edip tekrar alloc edin, aynı adresi geri verdiğini doğrulayın
+Adım 2.2 — Virtual Memory Manager (VMM / 32-bit Paging)
+
+Neden bundan sonra: PMM size "hangi fiziksel sayfa boş" bilgisini veriyor; VMM bu fiziksel sayfaları sanal adreslere eşlemeyi (mapping) sağlıyor. Paging olmadan bellek koruması, user mode, ve ileride demand paging gibi şeyler imkansız.
+
+2.2.1 — Page Directory (PD) ve Page Table (PT) struct'larını tanımlama (her biri 1024 adet 4-byte entry, toplam 4KB — sayfa hizalı olmalı, __attribute__((aligned(4096))))
+2.2.2 — Page Directory Entry (PDE) ve Page Table Entry (PTE) bit alanlarını anlama: Present, Read/Write, User/Supervisor, Accessed, Dirty, adres (üst 20 bit)
+2.2.3 — İlk aşamada identity mapping kurma — yani sanal adres = fiziksel adres (0x00000000'dan itibaren en azından kernel'ın kullandığı alan kadar). Bu, paging'i açar açmaz kernel'ın kendi kodunun/verisinin "kaybolmaması" için şart
+2.2.4 — vmm_map_page(virt_addr, phys_addr, flags) — bir sanal adresi bir fiziksel adrese bağlar (gerekirse yeni bir PT oluşturup PD'ye ekler)
+2.2.5 — vmm_unmap_page(virt_addr) — eşlemeyi kaldırır
+2.2.6 — vmm_get_physical(virt_addr) — sanal adresin karşılığı olan fiziksel adresi bulma (debug için faydalı)
+2.2.7 — CR3 register'ına Page Directory'nin fiziksel adresini yükleme
+2.2.8 — CR0'da PG (Paging) bitini (bit 31) açma — bu anı çok dikkatli yapın, identity mapping eksikse veya kernel kodu mapped değilse anında triple fault alırsınız
+2.2.9 — Paging açıldıktan hemen sonra serial'a "Paging enabled!" yazdırıp doğrulama
+2.2.10 — Page Fault (ISR 14) handler'ını gerçek işlevine kavuşturma — CR2 register'ından hatalı adresi okuma, error code'u (present/not-present, read/write, user/supervisor) çözümleyip anlamlı bir panic mesajı basma
+
+⚠️ Bu adım Faz 2'nin en riskli kısmı. Identity mapping'i kernel'ın tüm kod+veri+stack alanını (ve VGA buffer 0xB8000'i, ve az önce kurduğunuz bitmap alanını!) kapsayacak şekilde yapmazsanız, CR0.PG'yi açar açmaz sistem çöker.
+
+Adım 2.3 — Kernel Heap Allocator (kmalloc / kfree)
+
+Neden bundan sonra: PMM sadece 4KB'lık bloklar veriyor; ama kernel içinde çoğu zaman 24 byte'lık bir struct veya 100 byte'lık bir string için bellek lazım olacak. Heap allocator bunu sağlıyor.
+
+2.3.1 — İlk basit versiyon: Bump/Watermark allocator — bir başlangıç adresinden itibaren her kmalloc çağrısında pointer'ı ileri kaydırma. kfree başta hiçbir şey yapmaz (no-op). Bu, hızlıca çalışan bir şey görmek için iyi bir başlangıç
+2.3.2 — Heap için sanal adres alanı ayırma (örn. 0xC0000000'dan itibaren — ya da basitlik için kernel'ın hemen üstü) ve VMM ile bu alanı fiziksel sayfalara map etme (PMM'den sayfa alıp VMM ile map ederek heap'i büyütme mantığı — expand_heap() gibi)
+2.3.3 — Gerçek allocator'a geçiş: Free-list tabanlı allocator — her ayrılan blok öncesine bir header (size, is_free, next pointer) koyma
+2.3.4 — kmalloc(size) — free-list'te yeterince büyük boş blok arar, bulursa böler (splitting) ve döndürür; bulamazsa heap'i büyütür
+2.3.5 — kfree(ptr) — bloğu free işaretler, komşu boş bloklarla birleştirir (coalescing) — bu olmadan zamanla heap "parçalanır" (fragmentation)
+2.3.6 — Basit test: birkaç farklı boyutta alloc/free yapıp heap'in tutarlı kaldığını doğrulama (örn. bir "heap dump" debug fonksiyonu yazıp tüm blokları serial'a listeleyin)

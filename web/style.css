@@ -1,0 +1,430 @@
+:root {
+    --bg-dark: #1e1e1e;
+    --bg-panel: rgba(36, 36, 36, 0.85);
+    --bg-window: rgba(30, 30, 30, 0.95);
+    --border-color: rgba(255, 255, 255, 0.1);
+    --accent: #3584e4;
+    --text-main: #ffffff;
+    --text-muted: #9ca3af;
+    --radius-window: 12px;
+}
+
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    background: url('/resim.png') no-repeat center center fixed, linear-gradient(135deg, #2b4162 0%, #fa9c7a 100%);
+    background-size: cover;
+    color: var(--text-main);
+}
+
+#desktop {
+    width: 100vw;
+    height: calc(100vh - 40px);
+    position: relative;
+}
+
+.icon {
+    width: 80px;
+    padding: 10px;
+    text-align: center;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.2s, transform 0.2s;
+    margin: 10px;
+    display: inline-block;
+    vertical-align: top;
+}
+
+.icon:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+}
+
+.icon-img {
+    font-size: 40px;
+    margin-bottom: 5px;
+    text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+}
+
+.icon span {
+    font-size: 13px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    font-weight: 500;
+}
+
+/* Taskbar (GNOME Top Bar style but at bottom) */
+#taskbar {
+    width: 100vw;
+    height: 40px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(20px);
+    display: flex;
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    z-index: 1000;
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+}
+
+#start-btn {
+    height: 100%;
+    padding: 0 20px;
+    background: transparent;
+    border: none;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+#start-btn:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+#taskbar-apps {
+    flex: 1;
+    display: flex;
+    padding: 0 10px;
+    gap: 5px;
+}
+
+.taskbar-app {
+    padding: 5px 15px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.taskbar-app:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.taskbar-app.active {
+    background: rgba(255,255,255,0.15);
+    border-bottom: 2px solid var(--accent);
+}
+
+#clock {
+    padding: 0 20px;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+/* Start Menu */
+#start-menu {
+    position: fixed;
+    bottom: 48px;
+    left: 8px;
+    width: 250px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(25px);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 10px 0;
+    z-index: 999;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    transform-origin: bottom left;
+    animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popIn {
+    0% { transform: scale(0.9); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.hidden {
+    display: none !important;
+}
+
+.start-item {
+    padding: 12px 20px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.start-item:hover {
+    background: var(--accent);
+    color: white;
+}
+
+/* Windows */
+.window {
+    position: absolute;
+    width: 700px;
+    height: 450px;
+    background: var(--bg-window);
+    backdrop-filter: blur(30px);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-window);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+    overflow: hidden;
+    animation: windowOpen 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.window.minimized {
+    opacity: 0;
+    transform: scale(0.8) translateY(100px);
+    pointer-events: none;
+}
+
+.window.maximized {
+    width: 100vw !important;
+    height: calc(100vh - 40px) !important;
+    top: 0 !important;
+    left: 0 !important;
+    border-radius: 0;
+    transform: none;
+}
+
+@keyframes windowOpen {
+    0% { transform: scale(0.95); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.window.active {
+    z-index: 100;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    border-color: rgba(255,255,255,0.2);
+}
+
+.window-titlebar {
+    height: 40px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    padding: 0 15px;
+    cursor: move;
+    user-select: none;
+}
+
+.window-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 14px;
+    text-align: center;
+    color: #e5e7eb;
+}
+
+.window-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.window-controls button {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.1);
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.window-controls button:hover {
+    background: rgba(255,255,255,0.2);
+}
+
+.window-close { background: #ef4444 !important; }
+.window-close:hover { background: #dc2626 !important; }
+
+.window-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+    background: #1e1e1e;
+}
+
+.window-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 15px;
+    height: 15px;
+    cursor: nwse-resize;
+    z-index: 10;
+}
+
+/* Terminal Component */
+.terminal-output {
+    flex: 1;
+    background: #000;
+    color: #0f0;
+    font-family: 'Consolas', 'Courier New', monospace;
+    padding: 10px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 14px;
+}
+
+.terminal-input-wrapper {
+    display: flex;
+    background: #000;
+    color: #0f0;
+    font-family: 'Consolas', 'Courier New', monospace;
+    padding: 5px 10px;
+    border-top: 1px solid #333;
+    font-size: 14px;
+}
+
+.terminal-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #0f0;
+    font-family: inherit;
+    outline: none;
+    margin-left: 5px;
+    font-size: 14px;
+}
+
+/* Explorer Component (Windows style) */
+.explorer-layout {
+    display: flex;
+    height: 100%;
+}
+
+.explorer-sidebar {
+    width: 200px;
+    background: rgba(255,255,255,0.02);
+    border-right: 1px solid var(--border-color);
+    padding: 10px 0;
+    overflow-y: auto;
+}
+
+.explorer-sidebar-item {
+    padding: 8px 15px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.explorer-sidebar-item:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.explorer-sidebar-item.active {
+    background: rgba(255,255,255,0.1);
+    border-left: 3px solid var(--accent);
+}
+
+.explorer-main {
+    flex: 1;
+    padding: 15px;
+    overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 15px;
+}
+
+.file-item {
+    width: 90px;
+    padding: 10px;
+    text-align: center;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.file-item:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.file-icon {
+    font-size: 32px;
+    margin-bottom: 5px;
+}
+
+.file-name {
+    font-size: 12px;
+    word-wrap: break-word;
+}
+
+/* Editor Component */
+.editor-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.editor-toolbar {
+    height: 40px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 10px;
+}
+
+.editor-btn {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: white;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.editor-btn:hover {
+    background: var(--accent);
+}
+
+.editor-input {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 250px;
+}
+
+.editor-textarea {
+    flex: 1;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border: none;
+    padding: 15px;
+    font-family: 'Consolas', monospace;
+    font-size: 14px;
+    resize: none;
+    outline: none;
+}
+
+/* Control Center */
+.control-layout { display: flex; height: 100%; background: #1e1e1e; color: #ddd; }
+.control-sidebar { width: 200px; background: #252526; border-right: 1px solid #333; display: flex; flex-direction: column; padding-top: 10px; }
+.control-sidebar-item { padding: 12px 20px; cursor: pointer; transition: background 0.2s; }
+.control-sidebar-item:hover { background: rgba(255,255,255,0.05); }
+.control-sidebar-item.active { background: #007acc; color: white; border-left: 3px solid #61dafb; }
+.control-main { flex: 1; padding: 30px; overflow-y: auto; }
+.control-main h3 { margin-top: 0; color: white; font-weight: 300; font-size: 24px; margin-bottom: 20px; }
+.form-group { margin-bottom: 15px; }
+.form-group label { display: block; margin-bottom: 5px; color: #aaa; font-size: 12px; text-transform: uppercase; }
+.form-group input { width: 100%; max-width: 300px; padding: 8px; background: #333; border: 1px solid #444; color: white; border-radius: 4px; }
+.service-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 15px; border-radius: 6px; margin-bottom: 10px; border: 1px solid #333; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; }
+.stat-box { background: #2a2a2a; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #333; }
+.stat-box h4 { margin: 0 0 10px 0; color: #aaa; font-size: 12px; text-transform: uppercase; }
+.stat-box p { margin: 0; font-size: 24px; font-weight: bold; color: #61dafb; }

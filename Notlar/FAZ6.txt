@@ -1,0 +1,113 @@
+Harika bir vizyon — ve bu tam olarak konuşmanın en başında "ağ yönetimi (OSI katmanı)" olarak hayal ettiğiniz şeye dönüyoruz. Önce kritik bir gerçeklik ayrımı yapmam lazım, sonra faz faz plan.
+
+## ⚠️ Önce Netleştirmem Gereken 2 Kritik Nokta
+
+**1. QEMU'nun sanal NIC'i ile Foxconn anakartınızın gerçek NIC'i, iki ayrı ve çok farklı zorlukta proje.**
+QEMU varsayılan olarak (`-netdev user -device rtl8139` gibi) **RTL8139** emüle eder — 1990'ların basit bir kartı, register seti küçük, OSDev Wiki'de tam kod örnekleriyle anlatılır. Foxconn anakartınızdaki gerçek NIC ise büyük ihtimalle **Realtek RTL8111/8168/8169 (Gigabit)** — bu, descriptor-ring tabanlı DMA, MSI-X kesmeleri, PHY link negotiation, checksum offload gibi çok daha ileri seviye bir mimari kullanır. **Önerim: tüm bu Faz 6'yı QEMU'nun RTL8139'unda bitirin, gerçek donanımı en sona, ayrı bir "Faz 6.5 — Gerçek Donanım Portu" olarak bırakın.**
+
+**2. SSH konusunda dürüst olmalıyım: bu, ağ yığınından tamamen bağımsız, başlı başına devasa bir proje.**
+Telnet düz metin gönderir, SSH ise Diffie-Hellman anahtar değişimi, AES/ChaCha20 şifreleme, HMAC doğrulama, host key yönetimi gerektirir — **bu tek başına, muhtemelen tüm ZeruX projesinin şu ana kadarki en zor parçası**, ağ katmanından bile zor. Planı yine de ekliyorum ama gerçekçi bir "belki hiç yapmayın, ya da en sona bırakın" notuyla.
+
+---
+
+## 🌐 Faz 6 — İnternet Katmanı (OSI Modeline Göre, Katman Katman)
+
+### Faz 6.0 — Ön Hazırlık
+- **QEMU ağ modu seçimi:** `-netdev user,id=n0 -device rtl8139,netdev=n0` (SLIRP/NAT — kurulum gerektirmez, gerçek internete çıkabilir, `ping 8.8.8.8` gibi testler mümkün). `-netdev tap` (host'un gerçek ağına köprü) daha gerçekçi ama host tarafında `ip tuntap` kurulumu ister — başlangıç için `user` modunu önerin.
+- **DMA-safe bellek notu:** NIC, paket buffer'larına **fiziksel adresle** erişir (CPU'nun sanal adres kavramından habersiz). Şu an kernel'inizin düşük 32MB'ı identity-map olduğu için (`vaddr == paddr`), `pmm_alloc_block()`'tan gelen bir sayfa zaten DMA-safe — ekstra bir şey yapmanıza gerek yok, ama bunu bilerek ilerleyin.
+- **PCI tarayıcınızı** (Faz 5.1) NIC'i bulmak için kullanın: `pci_find_device(0x10EC, 0x8139)` (Realtek RTL8139 vendor/device ID).
+
+### Faz 6.1 — NIC Sürücüsü (Fiziksel Katman → Veri Bağlantısı Katmanına Giriş)
+- RTL8139'un I/O adresini PCI BAR0'dan al, IRQ hattını PCI config space'ten oku ve `irq_install_handler`'a kaydet.
+- Kart resetleme, TX/RX ring buffer'larını (fiziksel, hizalı bellek) ayırma ve karta bildirme.
+- MAC adresini kartın EEPROM/IDR register'larından okuma (`nic_get_mac()`).
+- `nic_send_packet(buf, len)` — TX ring'e yaz, karta "gönder" komutu ver.
+- IRQ handler — paket geldiğinde RX ring'den okuyup üst katmana (Ethernet parser) iletir.
+- **Kabul kriteri:** Kendi MAC adresinizi serial'a dump edebiliyorsunuz, gönderdiğiniz ham bir paket QEMU'nun ağ tarafında (`tcpdump` ile host'ta) görülebiliyor.
+
+### Faz 6.2 — Ethernet Frame (Katman 2)
+- `eth_header_t` (dest MAC, src MAC, ethertype — 14 byte).
+- Gelen paketi ethertype'a göre dağıtan `eth_handle_frame()` (0x0806 → ARP, 0x0800 → IPv4).
+- `eth_send_frame(dest_mac, ethertype, payload, len)` — üst katmanların ortak çıkış noktası.
+
+### Faz 6.3 — ARP (IP → MAC Çözümleme)
+- Basit bir ARP cache tablosu (`ip → mac`, sabit boyutlu dizi, LRU/timeout opsiyonel).
+- ARP Request/Reply paket yapıları ve gönderim/işleme mantığı.
+- ARP çözümü beklerken **busy-wait değil**, göreve `WAITING` durumu verip cache dolunca uyandırma (pipe'ta yaptığınız non-blocking deseni burada da tekrarlayın).
+- **Kabul kriteri:** `arp -a` benzeri bir komutla cache tablosunu dump edebiliyorsunuz.
+
+### Faz 6.4 — IPv4 Katmanı (Katman 3)
+- `ip_header_t`, Internet checksum algoritması (ones-complement toplama).
+- Statik IP yapılandırması ile başlayın (`ip_set_static(ip, netmask, gateway)`) — DHCT'yi opsiyonel/ileri adım yapın.
+- Basit bir routing kararı: hedef aynı subnet'teyse doğrudan ARP, değilse gateway'e gönder.
+- Parçalama (fragmentation) atlayın — sadece MTU boyutunda (1500 byte) paketlerle sınırlı kalın, bu bir hobi kernel için tamamen kabul edilebilir.
+
+### Faz 6.5 — ICMP (Ping) 🏓
+- Echo Request/Reply yapıları, checksum.
+- Shell'e `ping <ip>` komutu — PIT tick sayacınızla round-trip süresi ölçümü.
+- **Kabul kriteri:** `ping 8.8.8.8` gerçekten host makinenizin ağı üzerinden dışarı çıkıp cevap alıyor (`-netdev user` ile).
+
+### Faz 6.6 — UDP
+- Header + pseudo-header checksum.
+- Basit `sys_socket(AF_INET, SOCK_DGRAM)` + `sendto`/`recvfrom` — bağlantısız, en basit transport.
+- İleride DNS istemcisi için temel oluşturur.
+
+### Faz 6.7 — TCP (En Zor Katman) ⚠️
+- Bağlantı tablosu (`tcp_conn_t conns[MAX_CONNS]`), durum makinesi: `CLOSED → SYN_SENT/LISTEN → ESTABLISHED → FIN_WAIT → CLOSED`.
+- Önce **sadece istemci modu** (3 yönlü el sıkışma başlatma, veri gönderme/alma, düzgün kapama) — sunucu modunu (LISTEN/ACCEPT) ikinci adım yapın.
+- Sabit küçük bir pencere (window) ile başlayın, gerçek sliding window/congestion control'ü (Faz 6.7b) sonraya bırakın.
+- Retransmisyon: basit bir timer (PIT tick'inize bağlı), ACK gelmezse yeniden gönder.
+- **Kabul kriteri:** Kendi bilgisayarınızda `nc -l 5000` ile bir sunucu açıp ZeruX'tan bağlanıp veri gönderebiliyorsunuz.
+
+### Faz 6.8 — Port Tablosu / `netstat`
+- Aktif socket'leri (yerel port, uzak IP:port, durum) listeleyen bir `netstat` shell komutu — "port tabloları" isteğiniz tam burada karşılanıyor.
+- Socket'leri VFS'inizin "her şey dosyadır" felsefesine uygun şekilde bir vnode olarak modelleyin (`sys_socket` bir FD döndürsün, `sys_read`/`sys_write` zaten var olan mekanizmayla çalışsın) — Faz 5'te kurduğunuz per-task FD tablosu bunun için hazır.
+
+### Faz 6.9 — DNS İstemcisi (HTTP için ön koşul)
+- Basit bir UDP tabanlı DNS sorgusu (port 53), A-record çözümleme.
+- `nslookup`/`host` benzeri bir komut.
+
+### Faz 6.10 — HTTP İstemcisi 🌍
+- TCP connect (port 80) + elle yazılmış `GET / HTTP/1.1\r\nHost: ...\r\n\r\n` isteği + yanıtı okuyup ekrana basma.
+- Shell'e `wget <url>` ya da `curl <url>` komutu.
+- **Kabul kriteri:** ZeruX'tan gerçek bir web sitesine (örn. `example.com`) bağlanıp HTML çekebiliyorsunuz — bu, tüm yığının (Ethernet→ARP→IP→TCP→DNS) uçtan uca çalıştığının en somut kanıtı.
+
+### Faz 6.11 — Basit HTTP Sunucusu
+- TCP `listen(80)` + sabit bir HTML sayfası döndürme.
+- **Kabul kriteri:** Host makinenizin tarayıcısından ZeruX'un IP'sine gidip "Hello from ZeruX" sayfasını görebiliyorsunuz.
+
+### Faz 6.12 — Telnet Sunucusu
+- TCP `listen(23)` — gelen bağlantıyı, zaten var olan interaktif shell REPL'inize üçüncü bir "backend" (UART/GUI'nin yanına network socket) olarak bağlayın, kod tekrarı yapmayın.
+- **Kabul kriteri:** Host makinenizden `telnet <zerux-ip> 23` ile ZeruX shell'ine bağlanabiliyorsunuz.
+
+### Faz 6.13 (Opsiyonel, Gerçekçi Beklentiyle) — SSH
+- Yukarıda belirttiğim gibi bağımsız bir kriptografi projesi. Yapmak isterseniz alt adımlar: SHA-256 → HMAC → AES-CTR/ChaCha20 → Diffie-Hellman (MODP grupları) → SSH transport katmanı (RFC 4253) → auth (basit parola). **Gerçekçi tavsiyem: bunu ya hiç yapmayın ya da projenin en sonuna, "belki" kategorisine koyun.** Telnet + basit kullanıcı adı/şifre kontrolü, öğrenme hedefiniz için yeterli ve çok daha ulaşılabilir.
+
+### Faz 6.14 — Gerçek Donanım (Foxconn NIC)
+- Anakartınızdaki gerçek chipset'i PCI vendor/device ID ile tespit edin (`ls-pci` komutunuz zaten bunu yapıyor — gerçek donanımda çalıştırıp ID'yi öğrenin).
+- RTL8111/8168 için Realtek'in kamuya açık datasheet'i veya Linux `r8169.c` sürücüsünün **davranışını referans alarak** (kod kopyalamadan, register haritasını ve akışı anlayarak) kendi orijinal sürücünüzü yazın — tıpkı ATA sürücünüzde yaptığınız gibi.
+- Bu adım QEMU'da test edilemez, gerçek donanımda (USB'den boot ederek) denemeniz gerekir.
+
+---
+
+## 🎯 Önerilen Sıra (Özet)
+
+```
+6.0  → QEMU ağ modu + DMA notu
+6.1  → RTL8139 NIC sürücüsü
+6.2  → Ethernet frame katmanı
+6.3  → ARP
+6.4  → IPv4
+6.5  → ICMP (ping) ← ilk somut "çalışıyor!" anınız
+6.6  → UDP
+6.7  → TCP (istemci → sunucu)
+6.8  → netstat / port tablosu
+6.9  → DNS
+6.10 → HTTP istemci (wget/curl)
+6.11 → HTTP sunucu
+6.12 → Telnet sunucu
+6.13 → (opsiyonel) SSH
+6.14 → (en son, ayrı) Gerçek Foxconn NIC sürücüsü
+```
+
+Faz 5'teki gibi her adımdan sonra somut bir test kriteri var — `ping` çalışana kadar (6.5) hiçbir şey "görünür" olmayacak ama o ana geldiğinizde bütün alt katmanların doğru çalıştığının kanıtı elinizde olacak. Hazır olduğunuzda **6.1 (NIC sürücüsü)** ile başlayalım mı?

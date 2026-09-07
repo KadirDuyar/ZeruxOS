@@ -1,0 +1,88 @@
+Güzel ilerleme — gerçek bir bootloader + protected mode + freestanding kernel çalıştırmak epey iş. Şu an "beyin ölü ama kalp atıyor" aşamasındasınız: CPU çalışıyor ama dış dünyayla iletişim kuramıyor. Sırayla ne eklemeniz gerektiğini, bağımlılık sırasına göre yazayım (bir sonraki adım bir öncekine dayanıyor, o yüzden sıra önemli).
+
+## 🧠 Faz 1 — Kernel'in Sinir Sistemi (En Öncelikli)
+
+Bahsettiğiniz IDT/ISR/PIC olmadan hiçbir şey yapamazsınız — klavye bile okuyamazsınız. Sıra:
+
+1. **GDT'yi düzgünleştirme** (muhtemelen zaten var ama gözden geçirin: kod/veri segment ayrımı, TSS için yer bırakın)
+2. **IDT (Interrupt Descriptor Table)** — 256 giriş, her biri bir handler'a işaret eder
+3. **ISR'lar (Exception Handler'lar, 0-31)** — Divide by zero, Page Fault, GPF (General Protection Fault) vs. Bunlar olmadan bir hata olduğunda CPU triple-fault yapıp resetlenir, hiçbir hata mesajı göremezsiniz.
+4. **Kernel Panic ekranı** — ISR'lar yakaladığında ekrana kırmızı/mavi ekran + register dump basan fonksiyon
+5. **PIC yeniden programlama (remap)** — Varsayılan IRQ0-7 CPU exception'larıyla çakışır (0x08-0x0F), bunu 0x20-0x2F'e taşımanız şart
+6. **IRQ Handler'lar** — PIC'ten gelen donanım kesmelerini (Timer, Klavye) yakalayacak altyapı
+7. **PIT (Programmable Interval Timer)** — IRQ0, sistem saati/tick sayacı. Zamanlama, scheduler, sleep() için temel taşı
+
+Bu faz bitmeden diğer her şey (klavye, disk, ağ) imkansız çünkü hepsi kesme (interrupt) üzerinden çalışır.
+
+## 💾 Faz 2 — Bellek Yönetimi
+
+1. **GDT sonrası: Paging (Sayfalama)** — CR3, Page Directory, Page Table. Sanal bellek olmadan modern bir OS olmaz.
+2. **Physical Memory Manager (PMM)** — Bitmap veya free-list ile fiziksel RAM'i takip etme (BIOS'tan `int 15h, ax=E820h` ile memory map alın)
+3. **Virtual Memory Manager (VMM)** — Sayfa tablolarını yönetme, `map_page()`, `unmap_page()`
+4. **Heap Allocator** — `kmalloc`/`kfree`. Basit bir bump allocator ile başlayıp sonra free-list/slab allocator'a geçebilirsiniz
+5. **Page Fault Handler** — Faz 1'deki ISR 14 burada gerçek işlevini kazanır (demand paging, copy-on-write için temel)
+
+## ⌨️ Faz 3 — Temel Sürücüler (Driver'lar)
+
+1. **Keyboard Driver (PS/2)** — IRQ1, scancode → ASCII çeviri tablosu
+2. **PS/2 Mouse Driver** — IRQ12, mouse paketlerini çözümleme
+3. **Serial Port (COM1) Driver** — Debug çıktısı için hayat kurtarır (QEMU'da `-serial stdio` ile loglama)
+4. **RTC (Real Time Clock)** — Tarih/saat okuma
+5. **ATA/IDE veya AHCI Disk Driver** — Şu an INT 13h BIOS çağrısıyla disk okuyorsunuz; protected mode'da BIOS çağıramazsınız, gerçek bir disk driver şart
+6. Sonrasında **USB** — ama bu ciddi anlamda ileri seviye (UHCI/OHCI/EHCI/xHCI controller'ları + USB HID protokolü). Bunu en sona bırakın, PS/2 ile başlayın.
+
+## ⚙️ Faz 4 — İşlem (Process) Yönetimi
+
+1. **Kernel Stack yönetimi ve context switching** (register'ları kaydet/geri yükle — assembly'de yazılır)
+2. **TSS (Task State Segment)** — Ring 3'e geçiş ve stack switching için
+3. **Basit bir Scheduler** — Round-robin ile başlayın (PIT tick'ine bağlı)
+4. **Process/Task struct'ı** — PID, register durumu, sayfa dizini, durum (running/ready/blocked)
+5. **Ring 0 → Ring 3 geçişi** — User mode desteği (bu, gerçek bir "işletim sistemi" hissiyatı katan en önemli adımlardan biri)
+6. **Syscall mekanizması** — `int 0x80` ya da `SYSENTER/SYSCALL` ile user mode'dan kernel'e çağrı
+7. **IPC (Inter-Process Communication)** — Pipe'lar, sinyaller, paylaşımlı bellek
+
+## 📁 Faz 5 — Dosya Sistemi
+
+1. **VFS (Virtual File System) katmanı** — Soyutlama katmanı, farklı FS'leri destekleyebilmek için
+2. **Basit bir FS implementasyonu** — FAT12/16 (öğrenmesi kolay) veya kendi basit FS'iniz
+3. **Dosya tanımlayıcıları (file descriptors)** — open/read/write/close syscall'ları
+
+## 🌐 Faz 6 — Ağ (En İleri Seviye)
+
+Bunu gerçekten en sona bırakın, çok katmanlı:
+
+1. **NIC Driver** (örn. RTL8139 veya E1000 — QEMU'da emüle edilebilir, dokümantasyonu bol)
+2. **Ethernet Frame işleme**
+3. **ARP protokolü**
+4. **IP katmanı** (IPv4 önce)
+5. **ICMP** (ping için)
+6. **UDP** (basit, connectionless)
+7. **TCP** (çok daha karmaşık — state machine, retransmission, congestion control)
+8. **Socket API** (BSD socket benzeri arayüz)
+
+---
+
+## 🎯 Önerilen Gerçek Sıra (Bugünden İtibaren)
+
+```
+1. IDT + ISR (exception handling)          ← ŞİMDİ BURADAN BAŞLAYIN
+2. PIC remap + IRQ handling
+3. PIT (timer) + basit tick sayacı
+4. Serial port driver (debug için kritik!)
+5. Keyboard driver
+6. Physical Memory Manager (E820 map)
+7. Paging + Virtual Memory Manager
+8. kmalloc/kfree (heap)
+9. GDT'ye TSS ekleme
+10. Kernel panic / basit bir "kprintf" (debug çıktısı olmadan ilerleyemezsiniz)
+11. ATA disk driver (BIOS'a bağımlılığı kırmak için)
+12. Basit bir shell/komut satırı (test için)
+13. User mode + syscall
+14. Basit scheduler + multitasking
+15. VFS + basit dosya sistemi
+16. Ağ (en son)
+```
+
+**Bir tavsiye:** Her fazdan sonra **çalışan bir demo** olsun (örn. klavyeden yazı yazdırma, ekrana saat basma). Böyle büyük projelerde "her şeyi aynı anda yap" yaklaşımı motivasyonu öldürür. OSDev Wiki (osdev.org) ve James Molloy'un kernel tutorial'ı bu yol haritasının neredeyse tamamını kod örnekleriyle anlatıyor, referans olarak çok işinize yarar.
+
+Hangi fazdan başlamak istersiniz — IDT/ISR ile mi devam edelim?

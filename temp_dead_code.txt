@@ -1,0 +1,736 @@
+}
+
+/* UTF-8 string'deki g??r??n??r karakter say??s??n?? d??nd??r??r (piksel geni??li??i i??in) */
+static int32_t br_utf8_char_count(const char *s) {
+    int32_t n = 0;
+    while (*s) {
+        int consumed = 1;
+        br_utf8_decode(s, &consumed);
+        s += consumed;
+        n++;
+    }
+    return n;
+}
+
+/* URL'den host'u ayikla: "http://host:port/path" -> "host" */
+static void br_extract_host(const char *url, char *out, size_t max) {
+    const char *p = url;
+    if (br_strncmp(p, "http://", 7) == 0) p += 7;
+    size_t i = 0;
+    while (*p && *p != '/' && *p != ':' && i < max - 1) out[i++] = *p++;
+    out[i] = '\0';
+}
+
+/* Goreceli href'i mutlak URL'e cevir */
+static void br_resolve_href(const char *base_url, const char *href,
+                              char *out, size_t max) {
+    /* Eger href zaten mutlak ise dogrudan kullan */
+    if (br_strncmp(href, "http://", 7) == 0 ||
+        br_strncmp(href, "https://", 8) == 0) {
+        br_strcpy(out, href, max);
+        return;
+    }
+    /* Eger / ile baslarsa ana host'a ekle */
+    if (href[0] == '/') {
+        char host_part[128] = {0};
+        const char *p = base_url;
+        if (br_strncmp(p, "http://", 7) == 0) p += 7;
+        /* host + port */
+        const char *h = p;
+        while (*p && *p != '/') p++;
+        size_t hlen = (size_t)(p - h);
+        if (hlen >= sizeof(host_part) - 8) hlen = sizeof(host_part) - 9;
+        host_part[0] = 'h'; host_part[1] = 't'; host_part[2] = 't';
+        host_part[3] = 'p'; host_part[4] = ':'; host_part[5] = '/';
+        host_part[6] = '/';
+        for (size_t i = 0; i < hlen; i++) host_part[7 + i] = h[i];
+        host_part[7 + hlen] = '\0';
+        br_strcpy(out, host_part, max);
+        br_strcat_bounded(out, href, max);
+        return;
+    }
+    /* Goreceli: base URL'in son '/' a kadar al, sonra href ekle */
+    br_strcpy(out, base_url, max);
+    char *p = out;
+    if (br_strncmp(p, "http://", 7) == 0) p += 7;
+    while (*p && *p != '/') p++;
+    
+    if (*p == '\0') {
+        /* Base URL'de '/' yok, yani sadece host. Araya '/' koy ve href ekle */
+        br_strcat_bounded(out, "/", max);
+        br_strcat_bounded(out, href, max);
+        return;
+    }
+    
+    /* Base URL'de '/' var, sondaki slash'e kadar kes */
+    size_t len = br_strlen(out);
+    size_t host_end = (size_t)(p - out);
+    while (len > host_end && out[len - 1] != '/') { len--; }
+    out[len] = '\0';
+    br_strcat_bounded(out, href, max);
+}
+
+/* ---- Render -------------------------------------------------------------- */
+
+/* Tek satirlik metni satirlar halinde yazdir, sag kenardan tasar. */
+static int32_t br_draw_text_wrap(gfx_surface_t *surf, int32_t x, int32_t y,
+                                  const char *text, uint32_t fg, uint32_t bg,
+                                  int32_t max_x, int32_t scroll_y,
+                                  int32_t surf_h) {
+    const char *p = text;
+    int32_t cx = x;
+    int32_t cy = y - scroll_y;
+
+    while (*p) {
+        if (cx + BR_CHAR_W > max_x) {
+            /* satir sonu */
+            cx = x;
+            cy += BR_LINE_H;
+        }
+        if (cy + BR_CHAR_H > surf_h) break; /* ekran disi, dur */
+        if (cy + BR_CHAR_H > BR_TOOLBAR_H) { /* yukari scrollda gizli degil */
+            gfx_draw_char(surf, cx, cy, *p, fg, bg);
+        }
+        cx += BR_CHAR_W;
+        p++;
+    }
+    /* bir sonraki satir icin y donduruluyor */
+    return y + (((cx - x) > 0 || p > text) ? BR_LINE_H : 0);
+}
+
+/* ---- LAYOUT ENGINE (Box Model) ------------------------------------------- */
+typedef enum {
+    BOX_BLOCK,
+    BOX_INLINE,
+    BOX_IMAGE
+} box_type_t;
+
+typedef struct layout_box {
+    box_type_t type;
+    dom_node_t *node;
+
+    int32_t x, y;
+    int32_t w, h;
+
+    int32_t margin_top, margin_bottom, margin_left, margin_right;
+    int32_t padding_top, padding_bottom, padding_left, padding_right;
+    
+    int32_t content_x, content_y;
+    int32_t content_w, content_h;
+
+    gfx_surface_t *image;
+
+    struct layout_box *first_child;
+    struct layout_box *next_sibling;
+} layout_box_t;
+
+#define MAX_LAYOUT_BOXES 1024
+static layout_box_t g_box_pool[MAX_LAYOUT_BOXES];
+static int g_box_pool_idx = 0;
+
+static layout_box_t *br_alloc_box(box_type_t type, dom_node_t *node) {
+    if (g_box_pool_idx >= MAX_LAYOUT_BOXES) return NULL;
+    layout_box_t *b = &g_box_pool[g_box_pool_idx++];
+    b->type = type;
+    b->node = node;
+    b->x = 0; b->y = 0; b->w = 0; b->h = 0;
+    b->margin_top = 0; b->margin_bottom = 0; b->margin_left = 0; b->margin_right = 0;
+    b->padding_top = 0; b->padding_bottom = 0; b->padding_left = 0; b->padding_right = 0;
+    b->content_x = 0; b->content_y = 0; b->content_w = 0; b->content_h = 0;
+    b->image = NULL;
+    b->first_child = NULL;
+    b->next_sibling = NULL;
+    return b;
+}
+
+static void br_reset_layout(void) {
+    g_box_pool_idx = 0;
+}
+
+/* ---- Inline Layout Context -----------------------------------------------
+ * Inline elementler (TEXT, B, I, A, CODE, MARK, SMALL, S, SPAN) bu context'i
+ * payla????r. Block elementler (P, H1-H6, LI, DIV, TABLE...) yeni bir context
+ * ba??lat??r.
+ * --------------------------------------------------------------------------- */
+typedef struct {
+    int32_t  cx;       /* mevcut X imleci (block-start'tan itibaren) */
+    int32_t  y;        /* mevcut i??erik-Y (scroll eklenmemi??) */
+    int32_t  x0;       /* sat??r ba??lang???? X */
+    int32_t  max_x;    /* sa?? s??n??r */
+    int32_t  scroll_y; /* ekran kayd??rmas?? (??izim i??in) */
+    int32_t  surf_h;   /* surface y??ksekli??i */
+    bool     pending_newline; /* sat??r sonu bekleniyor mu */
+} layout_ctx_t;
+
+/* Kelime bazl?? sat??r say??s?? (UTF-8 aware). x_start'tan ba??layarak hesaplar. */
+static int32_t br_text_line_count(const char *text, int32_t x_start,
+                                   int32_t max_x) {
+    if (!text || !*text) return 0;
+    /* ??nce ASCII'ye d??n????t??r, sonra say */
+    char buf[512];
+    br_utf8_to_ascii(text, buf, sizeof(buf));
+    int32_t cx = x_start;
+    int32_t lines = 1;
+    const char *p = buf;
+    while (*p) {
+        const char *we = p;
+        while (*we && *we != ' ') we++;
+        int32_t ww = (int32_t)((we - p) * BR_CHAR_W);
+        if (cx > x_start && cx + ww > max_x) { cx = x_start; lines++; }
+        cx += ww;
+        p = we;
+        if (*p == ' ') {
+            if (cx + BR_CHAR_W > max_x) { cx = x_start; lines++; }
+            else cx += BR_CHAR_W;
+            p++;
+        }
+    }
+    return lines;
+}
+
+/* Bir kelimeyi (veya bo??lukla ayr??lm???? token'??) layout context i??ine ??izer.
+ * UTF-8 fark??ndal??kl??, underline ve background deste??i var. */
+static void br_lctx_emit_word(gfx_surface_t *surf, layout_ctx_t *ctx,
+                               const char *word, int32_t wlen,
+                               uint32_t fg, uint32_t bg,
+                               bool underline, bool strikethrough) {
+    /* Ekran??n alt??nda m??? */
+    if (surf && ctx->y - ctx->scroll_y >= ctx->surf_h) return;
+
+    int32_t draw_x = ctx->cx;
+    int32_t draw_y = ctx->y;
+    int32_t vy = draw_y - ctx->scroll_y;
+
+    if (surf && (vy + BR_CHAR_H <= BR_TOOLBAR_H)) return; /* toolbar alt??nda gizli */
+    if (surf && (vy >= ctx->surf_h)) return;
+
+    const char *p = word;
+    int chars_left = (int)wlen;
+    int32_t lx = draw_x;
+
+    while (chars_left > 0) {
+        int consumed = 1;
+        char ch = br_utf8_decode(p, &consumed);
+        p += consumed;
+        chars_left -= consumed;
+
+        vy = ctx->y - ctx->scroll_y;
+        if (surf && (vy >= ctx->surf_h || vy + BR_CHAR_H <= BR_TOOLBAR_H)) {
+            lx += BR_CHAR_W;
+            continue;
+        }
+        if (lx + BR_CHAR_W > ctx->max_x) break; /* sa?? s??n??r a????ld?? */
+
+        if (surf) gfx_draw_char(surf, lx, vy, ch, fg, bg);
+
+        if (surf && underline) {
+            int32_t uly = vy + BR_CHAR_H - 2;
+            for (int32_t ux = lx; ux < lx + BR_CHAR_W && ux < ctx->max_x; ux++)
+                gfx_put_pixel(surf, ux, uly, fg);
+        }
+        if (surf && strikethrough) {
+            int32_t sly = vy + BR_CHAR_H / 2;
+            for (int32_t ux = lx; ux < lx + BR_CHAR_W && ux < ctx->max_x; ux++)
+                gfx_put_pixel(surf, ux, sly, fg);
+        }
+        lx += BR_CHAR_W;
+    }
+    ctx->cx = lx;
+}
+
+/* Metin stringini kelime kelime layout context'e yaz (UTF-8 aware, word-wrap). */
+static void br_lctx_emit_text(gfx_surface_t *surf, layout_ctx_t *ctx,
+                               const char *text,
+                               uint32_t fg, uint32_t bg,
+                               bool underline, bool strikethrough) {
+    const char *p = text;
+    while (*p) {
+        /* Bo??luk karakteri */
+        if (*p == ' ' || *p == '\t' || *p == '\n') {
+            if (ctx->cx > ctx->x0) {
+                /* Bo??luk s??????yor mu? */
+                if (ctx->cx + BR_CHAR_W > ctx->max_x) {
+                    /* Sat??r sonu */
+                    ctx->cx = ctx->x0;
+                    ctx->y += BR_LINE_H;
+                } else {
+                    int32_t vy = ctx->y - ctx->scroll_y;
+                    if (surf && vy + BR_CHAR_H > BR_TOOLBAR_H && vy < ctx->surf_h)
+                        gfx_draw_char(surf, ctx->cx, vy, ' ', fg, bg);
+                    ctx->cx += BR_CHAR_W;
+                }
+            }
+            p++;
+            continue;
+        }
+
+        /* Kelimenin sonunu bul (byte olarak) */
+        const char *word_start = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n') {
+            int consumed = 1;
+            br_utf8_decode(p, &consumed);
+            p += consumed;
+        }
+        int32_t word_bytes = (int32_t)(p - word_start);
+
+        /* Kelime geni??li??ini karakter say??s??ndan hesapla */
+        int32_t char_count = 0;
+        const char *tmp = word_start;
+        while (tmp < p) {
+            int consumed = 1;
+            br_utf8_decode(tmp, &consumed);
+            tmp += consumed;
+            char_count++;
+        }
+        int32_t word_w = char_count * BR_CHAR_W;
+
+        /* Kelime sat??ra s????m??yor ve ba??ta de??iliz: yeni sat??r */
+        if (ctx->cx > ctx->x0 && ctx->cx + word_w > ctx->max_x) {
+            ctx->cx = ctx->x0;
+            ctx->y += BR_LINE_H;
+        }
+
+        /* Kelimeyi ??iz */
+        br_lctx_emit_word(surf, ctx, word_start, word_bytes,
+                          fg, bg, underline, strikethrough);
+    }
+}
+
+/* Context'te bekleyen sat??r?? kapat (block elementten ??nce ??a??r??l??r) */
+static void br_lctx_newline(layout_ctx_t *ctx) {
+    if (ctx->cx > ctx->x0) {
+        ctx->y += BR_LINE_H;
+        ctx->cx = ctx->x0;
+    }
+}
+
+/* ---- Heading render (UTF-8 aware, inline flow) ---------------------------- */
+static int32_t br_render_heading(gfx_surface_t *surf, dom_node_t *node,
+                                  int32_t x, int32_t y, int32_t max_x,
+                                  int32_t scroll_y, int32_t surf_h,
+                                  uint32_t color, bool underline_after) {
+    layout_ctx_t ctx;
+    ctx.x0 = x; ctx.cx = x; ctx.y = y;
+    ctx.max_x = max_x; ctx.scroll_y = scroll_y;
+    ctx.surf_h = surf_h; ctx.pending_newline = false;
+    for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+        if (c->tag == DOM_TAG_TEXT && c->text[0])
+            br_lctx_emit_text(surf, &ctx, c->text, color, BR_BG, false, false);
+    br_lctx_newline(&ctx);
+    if (underline_after) {
+        int32_t uy = ctx.y - scroll_y;
+        if (uy > BR_TOOLBAR_H && uy < surf_h)
+            gfx_draw_line(surf, x, uy, max_x, uy, 0xCCCCCC);
+    }
+    return ctx.y;
+}
+
+/* Forward declaration */
+static int32_t br_render_node(gfx_surface_t *surf, dom_node_t *node,
+                               int32_t x, int32_t y,
+                               int32_t max_x, int32_t scroll_y,
+                               int32_t surf_h,
+                               link_rect_t *links, int32_t *link_count,
+                               int32_t max_links,
+                               const char *base_url,
+                               int32_t list_depth,
+                               bool in_bold);
+
+/* ---- Inline elementleri layout context ile ciz ---------------------------- */
+static void br_render_inline(gfx_surface_t *surf, dom_node_t *node,
+                              layout_ctx_t *ctx,
+                              link_rect_t *links, int32_t *link_count,
+                              int32_t max_links,
+                              const char *base_url,
+                              bool in_bold) {
+    if (!node) return;
+    switch (node->tag) {
+    case DOM_TAG_TEXT:
+        if (node->text[0])
+            br_lctx_emit_text(surf, ctx, node->text,
+                              in_bold ? BR_BOLD : BR_TEXT, BR_BG, false, false);
+        break;
+    case DOM_TAG_B:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, true);
+        break;
+    case DOM_TAG_I: case DOM_TAG_U: case DOM_TAG_SPAN:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        break;
+    case DOM_TAG_S:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TEXT && c->text[0])
+                br_lctx_emit_text(surf, ctx, c->text, 0x888888, BR_BG, false, true);
+            else
+                br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        break;
+    case DOM_TAG_CODE:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TEXT && c->text[0])
+                br_lctx_emit_text(surf, ctx, c->text, BR_CODE_TXT, BR_BG, false, false);
+            else
+                br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        break;
+    case DOM_TAG_MARK:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TEXT && c->text[0])
+                br_lctx_emit_text(surf, ctx, c->text, BR_MARK_TXT, BR_MARK_BG, false, false);
+            else
+                br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        break;
+    case DOM_TAG_SMALL:
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TEXT && c->text[0])
+                br_lctx_emit_text(surf, ctx, c->text, BR_SMALL_TXT, BR_BG, false, false);
+            else
+                br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        break;
+    case DOM_TAG_A: {
+        char full_url[BR_URL_MAX];
+        br_resolve_href(base_url, node->attr, full_url, sizeof(full_url));
+        int32_t lys = ctx->y, lxs = ctx->cx;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TEXT && c->text[0])
+                br_lctx_emit_text(surf, ctx, c->text, BR_LINK, BR_BG, true, false);
+            else
+                br_render_inline(surf, c, ctx, links, link_count, max_links, base_url, in_bold);
+        if (*link_count < max_links) {
+            link_rect_t *lr = &links[*link_count];
+            lr->y = lys; lr->x = lxs; lr->w = ctx->max_x - lxs;
+            br_strcpy(lr->href, full_url, BR_URL_MAX);
+            (*link_count)++;
+        }
+        break;
+    }
+    case DOM_TAG_BR:
+        ctx->y += BR_LINE_H; ctx->cx = ctx->x0;
+        break;
+    default: {
+        /* Bilinmeyen inline -> block olarak render et */
+        br_lctx_newline(ctx);
+        ctx->y = br_render_node(surf, node, ctx->x0, ctx->y, ctx->max_x,
+                                ctx->scroll_y, ctx->surf_h,
+                                links, link_count, max_links,
+                                base_url, 0, in_bold);
+        ctx->cx = ctx->x0;
+        break;
+    }
+    }
+}
+
+/* Block icindeki cocuklari: icerige gore inline ya da block dispatch eder */
+static int32_t br_render_block_children(gfx_surface_t *surf, dom_node_t *parent,
+                                         int32_t x, int32_t y,
+                                         int32_t max_x, int32_t scroll_y,
+                                         int32_t surf_h,
+                                         link_rect_t *links, int32_t *link_count,
+                                         int32_t max_links,
+                                         const char *base_url,
+                                         int32_t list_depth,
+                                         bool in_bold) {
+    /* Block element var mi? */
+    bool has_block = false;
+    for (dom_node_t *c = parent->first_child; c && !has_block; c = c->next_sibling) {
+        switch (c->tag) {
+        case DOM_TAG_P: case DOM_TAG_H1: case DOM_TAG_H2: case DOM_TAG_H3:
+        case DOM_TAG_H4: case DOM_TAG_H5: case DOM_TAG_H6:
+        case DOM_TAG_UL: case DOM_TAG_OL: case DOM_TAG_LI:
+        case DOM_TAG_TABLE: case DOM_TAG_TR: case DOM_TAG_DIV:
+        case DOM_TAG_BLOCKQUOTE: case DOM_TAG_PRE: case DOM_TAG_HR:
+        case DOM_TAG_DL: case DOM_TAG_DT: case DOM_TAG_DD:
+        case DOM_TAG_HEADER: case DOM_TAG_NAV: case DOM_TAG_FOOTER:
+        case DOM_TAG_MAIN: case DOM_TAG_SECTION: case DOM_TAG_ARTICLE:
+        case DOM_TAG_ASIDE:
+            has_block = true; break;
+        default: break;
+        }
+    }
+    if (has_block) {
+        for (dom_node_t *c = parent->first_child; c; c = c->next_sibling)
+            y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                               links, link_count, max_links,
+                               base_url, list_depth, in_bold);
+    } else {
+        layout_ctx_t ctx;
+        ctx.x0 = x; ctx.cx = x; ctx.y = y;
+        ctx.max_x = max_x; ctx.scroll_y = scroll_y;
+        ctx.surf_h = surf_h; ctx.pending_newline = false;
+        for (dom_node_t *c = parent->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, &ctx, links, link_count, max_links, base_url, in_bold);
+        br_lctx_newline(&ctx);
+        y = ctx.y;
+    }
+    return y;
+}
+
+/* ---- Ana DOM render fonksiyonu ------------------------------------------- */
+static int32_t br_render_node(gfx_surface_t *surf, dom_node_t *node,
+                               int32_t x, int32_t y,
+                               int32_t max_x, int32_t scroll_y,
+                               int32_t surf_h,
+                               link_rect_t *links, int32_t *link_count,
+                               int32_t max_links,
+                               const char *base_url,
+                               int32_t list_depth,
+                               bool in_bold) {
+    if (!node) return y;
+    int32_t vy = y - scroll_y;
+
+    switch (node->tag) {
+
+    /* Yapisal / semantik: cocuklari dispatch et */
+    case DOM_TAG_HTML: case DOM_TAG_HEAD: case DOM_TAG_BODY:
+    case DOM_TAG_DIV:  case DOM_TAG_UNKNOWN:
+    case DOM_TAG_MAIN: case DOM_TAG_SECTION: case DOM_TAG_ARTICLE: case DOM_TAG_ASIDE:
+    case DOM_TAG_THEAD: case DOM_TAG_TBODY: case DOM_TAG_TFOOT:
+        y = br_render_block_children(surf, node, x, y, max_x, scroll_y, surf_h,
+                                     links, link_count, max_links,
+                                     base_url, list_depth, in_bold);
+        break;
+
+    /* Inline -> gecici ctx */
+    case DOM_TAG_SPAN: case DOM_TAG_B: case DOM_TAG_I: case DOM_TAG_U:
+    case DOM_TAG_S: case DOM_TAG_CODE: case DOM_TAG_MARK: case DOM_TAG_SMALL:
+    case DOM_TAG_A: case DOM_TAG_TEXT: {
+        layout_ctx_t ctx;
+        ctx.x0 = x; ctx.cx = x; ctx.y = y;
+        ctx.max_x = max_x; ctx.scroll_y = scroll_y;
+        ctx.surf_h = surf_h; ctx.pending_newline = false;
+        br_render_inline(surf, node, &ctx, links, link_count, max_links, base_url, in_bold);
+        br_lctx_newline(&ctx);
+        y = ctx.y;
+        break;
+    }
+
+    case DOM_TAG_HEADER: case DOM_TAG_NAV: case DOM_TAG_FOOTER:
+        y += 6;
+        y = br_render_block_children(surf, node, x, y, max_x, scroll_y, surf_h,
+                                     links, link_count, max_links,
+                                     base_url, list_depth, in_bold);
+        y += 6;
+        break;
+
+    case DOM_TAG_TITLE: break;
+
+    /* Basliklar */
+    case DOM_TAG_H1: y += 8;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H1, true);  y += 8; break;
+    case DOM_TAG_H2: y += 6;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H2, false); y += 5; break;
+    case DOM_TAG_H3: y += 5;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H3, false); y += 4; break;
+    case DOM_TAG_H4: y += 4;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H4, false); y += 3; break;
+    case DOM_TAG_H5: y += 3;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H5, false); y += 2; break;
+    case DOM_TAG_H6: y += 2;  y = br_render_heading(surf, node, x, y, max_x, scroll_y, surf_h, BR_H6, false); y += 2; break;
+
+    /* Paragraf */
+    case DOM_TAG_P:
+        y += 4;
+        y = br_render_block_children(surf, node, x, y, max_x, scroll_y, surf_h,
+                                     links, link_count, max_links,
+                                     base_url, list_depth, in_bold);
+        y += 4;
+        break;
+
+    /* PRE: ASCII fallback + sabit font */
+    case DOM_TAG_PRE: {
+        y += 4;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling) {
+            if (c->tag == DOM_TAG_TEXT && c->text[0]) {
+                vy = y - scroll_y;
+                if (vy < surf_h && vy + BR_LINE_H > BR_TOOLBAR_H) {
+                    char ab[512]; br_utf8_to_ascii(c->text, ab, sizeof(ab));
+                    gfx_fill_rect(surf, x - 4, vy, max_x - x + 4, BR_LINE_H, BR_CODE_BG);
+                    gfx_draw_text(surf, x, vy, ab, BR_CODE_TXT, BR_CODE_BG);
+                }
+                y += br_text_line_count(c->text, x, max_x) * BR_LINE_H;
+            } else {
+                y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                                   links, link_count, max_links, base_url, list_depth, in_bold);
+            }
+        }
+        y += 4;
+        break;
+    }
+
+    /* Blockquote */
+    case DOM_TAG_BLOCKQUOTE: {
+        y += 4;
+        int32_t bq0 = y;
+        int32_t bqx = x + 16;
+        y = br_render_block_children(surf, node, bqx, y, max_x - 8, scroll_y, surf_h,
+                                     links, link_count, max_links, base_url, list_depth, in_bold);
+        vy = bq0 - scroll_y;
+        int32_t vy2 = y - scroll_y;
+        if (vy < surf_h && vy2 > BR_TOOLBAR_H) {
+            int32_t dy0 = vy < BR_TOOLBAR_H ? BR_TOOLBAR_H : vy;
+            int32_t dy1 = vy2 > surf_h ? surf_h : vy2;
+            gfx_fill_rect(surf, x, dy0, 4, dy1 - dy0, BR_QUOTE_BAR);
+        }
+        y += 4;
+        break;
+    }
+
+    /* Listeler */
+    case DOM_TAG_UL:
+        y += 4;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                               links, link_count, max_links, base_url, list_depth + 1, in_bold);
+        y += 4;
+        break;
+    case DOM_TAG_OL:
+        y += 4;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                               links, link_count, max_links, base_url, list_depth + 1, in_bold);
+        y += 4;
+        break;
+    case DOM_TAG_LI: {
+        int32_t bx = x + list_depth * 16;
+        vy = y - scroll_y;
+        if (vy + BR_LINE_H > BR_TOOLBAR_H && vy < surf_h) {
+            if (node->list_index > 0) {
+                char nl[8]; uint16_t n = node->list_index; int pos = 0;
+                if (n >= 10) nl[pos++] = (char)('0' + n / 10);
+                nl[pos++] = (char)('0' + n % 10); nl[pos++] = '.'; nl[pos++] = ' '; nl[pos] = '\0';
+                gfx_draw_text(surf, bx - 24, vy, nl, BR_BULLET, BR_BG);
+            } else {
+                gfx_fill_circle(surf, bx - 8, vy + BR_CHAR_H / 2,
+                                (list_depth > 1) ? 1 : 2, BR_BULLET);
+            }
+        }
+        y = br_render_block_children(surf, node, bx, y, max_x, scroll_y, surf_h,
+                                     links, link_count, max_links, base_url, list_depth, in_bold);
+        break;
+    }
+
+    /* Tanim listesi */
+    case DOM_TAG_DL:
+        y += 4;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                               links, link_count, max_links, base_url, list_depth, in_bold);
+        y += 4;
+        break;
+    case DOM_TAG_DT: {
+        y += 3;
+        layout_ctx_t ctx; ctx.x0 = x; ctx.cx = x; ctx.y = y;
+        ctx.max_x = max_x; ctx.scroll_y = scroll_y; ctx.surf_h = surf_h; ctx.pending_newline = false;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, &ctx, links, link_count, max_links, base_url, true);
+        br_lctx_newline(&ctx); y = ctx.y;
+        break;
+    }
+    case DOM_TAG_DD: {
+        layout_ctx_t ctx; ctx.x0 = x + 24; ctx.cx = x + 24; ctx.y = y;
+        ctx.max_x = max_x; ctx.scroll_y = scroll_y; ctx.surf_h = surf_h; ctx.pending_newline = false;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, &ctx, links, link_count, max_links, base_url, in_bold);
+        br_lctx_newline(&ctx); y = ctx.y + 2;
+        break;
+    }
+
+    /* Yatay cizgi / satir sonu */
+    case DOM_TAG_HR:
+        y += 4; vy = y - scroll_y;
+        if (vy > BR_TOOLBAR_H && vy < surf_h) {
+            gfx_draw_line(surf, x, vy, max_x, vy, BR_HR);
+            gfx_draw_line(surf, x, vy + 1, max_x, vy + 1, 0xEEEEEE);
+        }
+        y += 6;
+        break;
+    case DOM_TAG_BR:
+        y += BR_LINE_H; break;
+
+    /* Medya */
+    case DOM_TAG_IMG: {
+        int32_t iw = node->attr_w > 0 ? node->attr_w : 64;
+        int32_t ih = node->attr_h > 0 ? node->attr_h : 32;
+        if (iw > max_x - x) iw = max_x - x;
+        if (ih > 200) ih = 200;
+        vy = y - scroll_y;
+        if (vy + ih > BR_TOOLBAR_H && vy < surf_h) {
+            gfx_fill_rect(surf, x, vy, iw, ih, 0xEEEEEE);
+            gfx_draw_rect(surf, x, vy, iw, ih, BR_TABLE_BORDER);
+            gfx_draw_text(surf, x + 4, vy + 4, "[IMG]", 0x888888, 0xEEEEEE);
+            if (node->attr2[0]) {
+                char ab[128]; br_utf8_to_ascii(node->attr2, ab, sizeof(ab));
+                gfx_draw_text(surf, x + 4, vy + 4 + BR_LINE_H, ab, 0x666666, 0xEEEEEE);
+            }
+        }
+        y += ih + 4;
+        break;
+    }
+
+    /* Tablo */
+    case DOM_TAG_TABLE: {
+        y += 4;
+        int32_t ts = y, tw = max_x - x;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            y = br_render_node(surf, c, x, y, max_x, scroll_y, surf_h,
+                               links, link_count, max_links, base_url, list_depth, in_bold);
+        vy = ts - scroll_y;
+        if (vy < surf_h && vy > BR_TOOLBAR_H)
+            gfx_draw_rect(surf, x, vy, tw, y - ts, BR_TABLE_BORDER);
+        y += 4;
+        break;
+    }
+    case DOM_TAG_CAPTION: {
+        layout_ctx_t ctx; ctx.x0 = x; ctx.cx = x; ctx.y = y;
+        ctx.max_x = max_x; ctx.scroll_y = scroll_y; ctx.surf_h = surf_h; ctx.pending_newline = false;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            br_render_inline(surf, c, &ctx, links, link_count, max_links, base_url, in_bold);
+        br_lctx_newline(&ctx); y = ctx.y + 2;
+        break;
+    }
+    case DOM_TAG_TR: {
+        int32_t tdc = 0;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling)
+            if (c->tag == DOM_TAG_TD || c->tag == DOM_TAG_TH) tdc++;
+        if (tdc < 1) tdc = 1;
+        int32_t cw = (max_x - x) / tdc, ry = y, mcy = y, ci = 0;
+        for (dom_node_t *c = node->first_child; c; c = c->next_sibling) {
+            if (c->tag == DOM_TAG_TD || c->tag == DOM_TAG_TH) {
+                int32_t cx0 = x + ci * cw, cx1 = cx0 + cw;
+                if (c->tag == DOM_TAG_TH) {
+                    vy = ry - scroll_y;
+                    if (vy < surf_h && vy + BR_LINE_H > BR_TOOLBAR_H)
+                        gfx_fill_rect(surf, cx0, vy, cw, BR_LINE_H, BR_TH_BG);
+                }
+                int32_t cye = br_render_node(surf, c, cx0 + 4, ry, cx1 - 4,
+                                             scroll_y, surf_h, links, link_count, max_links,
+                                             base_url, list_depth,
+                                             c->tag == DOM_TAG_TH ? true : in_bold);
+                if (cye > mcy) mcy = cye;
+                if (ci < tdc - 1) {
+                    vy = ry - scroll_y; int32_t vy2 = mcy - scroll_y;
+                    if (vy < surf_h)
+                        gfx_draw_line(surf, cx1, vy, cx1, vy2, BR_TABLE_BORDER);
+                }
+                ci++;
+            }
+        }
+        vy = mcy - scroll_y;
+        if (vy > BR_TOOLBAR_H && vy < surf_h)
+            gfx_draw_line(surf, x, vy, max_x, vy, BR_TABLE_BORDER);
+        y = mcy;
+        break;
+    }
+    case DOM_TAG_TH: case DOM_TAG_TD:
+        y = br_render_block_children(surf, node, x, y, max_x, scroll_y, surf_h,
+                                     links, link_count, max_links, base_url, list_depth,
+                                     node->tag == DOM_TAG_TH ? true : in_bold);
+        break;
+
+    default: break;
+    }
+    return y;
+}
+/* ---- LAYOUT TREE BUILDING ------------------------------------------------ */
+static void br_layout_process_node(layout_box_t *parent, dom_node_t *node, int32_t *y_cursor, int32_t max_x, int32_t list_depth) {
+    if (!node) return;
+    
+    /* Skip non-visible tags or scripts */
+    if (node->tag == DOM_TAG_UNKNOWN || node->tag == DOM_TAG_HEAD) {
+        return;
+    }
+

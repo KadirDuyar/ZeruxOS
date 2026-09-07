@@ -1,0 +1,13 @@
+1. LOAD segment with RWX permissions
+ld: warning: build/kernel.elf has a LOAD segment with RWX permissions
+
+Bu konuda AI doğru söylemiş.
+
+İlk aşamadaki bir hobby kernel için bu kritik değil. Sonradan .text, .rodata, .data, .bss ayrımı ve PHDRS ile düzeltilir.
+
+Bunu şimdilik not alıp geçebilirsin.
+
+
+İleride Isırabilecek 2 Nokta (şimdilik acil değil ama not edin)
+.bss sıfırlanmıyor, ama şu an "tesadüfen" çalışıyor. Linker script'inizde .bss alanı dosyaya yazılmıyor; ama bootloader her zaman sabit 64 sektör (32KB) kopyalıyor 0x10000'den 0x100000'e — ve disk imajı dd if=/dev/zero ile önceden sıfırlanmış. Yani şu an gerçek kernel.bin'iniz (13KB) küçük olduğu için, kalan ~19KB'lık boşluk zaten disk üzerinde sıfır ve o da kopyalanıyor — .bss'iniz "kazara" sıfırlanıyor. PMM'in bitmap'i gibi büyük statik diziler eklediğinizde kernel boyutu büyüyecek, ve .bss fiziksel kopyalanan 32KB'lık alanın dışına taşarsa artık sıfır garantisi kalmaz → PMM bitmap'i çöp veriyle başlayabilir. Faz 2'ye başlarken kernel_main'in en başına açıkça bir bss sıfırlama döngüsü koymanızı öneririm (_kernel_end ve .bss başlangıç sembolünü linker script'e ekleyip memset benzeri bir döngüyle).
+Gerçek donanımda E820 girişleri 6'dan çok daha fazla olabilir (20-30 giriş normal) — 0x8000'den başlayan dizi büyüdükçe 0x10000'e (kernel geçici buffer) yaklaşabilir. QEMU'da sorun değil ama not düşülmeye değer.

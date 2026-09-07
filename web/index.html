@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aurora v0.4 Layout Engine Test</title>
+</head>
+
+<body>
+
+<h1>Aurora Layout Engine v0.4</h1>
+<p>
+    Bu sayfa Aurora Browser'in yeni Layout Tree ve Paint mimarisini test etmek
+    icin hazirlanmistir.
+</p>
+
+<hr>
+
+<h2>1. Block Layout Testi</h2>
+
+<div>
+    Bu bir BLOCK kutusudur.
+</div>
+
+<div>
+    Ikinci BLOCK kutusu burada baslar.
+</div>
+
+<p>
+    Paragraf block layout testi.
+</p>
+
+<h3>Alt Baslik</h3>
+
+<p>
+    Birinci paragraf. Bu paragrafin altinda ikinci paragraf bulunuyor.
+</p>
+
+<p>
+    Ikinci paragraf. Block elemanlarinin birbirinden sonra dogru
+    konumlanmasi gerekiyor.
+</p>
+
+<hr>
+
+<h2>2. Inline Layout Testi</h2>
+
+<p>
+    Bu paragraf tamamen normal metin ile baslar.
+    <b>Bu kisim bold.</b>
+    <i>Bu kisim italic.</i>
+    <u>Bu kisim underline.</u>
+    <strong>Bu kisim strong.</strong>
+    <em>Bu kisim emphasis.</em>
+    Ve burasi tekrar normal metindir.
+</p>
+
+<p>
+    Inline elemanlar ayni satirda kalmaya calismalidir:
+    normal
+    <b>bold</b>
+    <i>italic</i>
+    <a href="http://example.com">link</a>
+    normal devam.
+</p>
+
+<hr>
+
+<h2>3. Word Wrapping Testi</h2>
+
+<p>
+    Bu cok uzun bir metindir ve Aurora Layout Engine tarafindan kelime
+    sinirlarina dikkat edilerek satirlara ayrilmasi gerekmektedir.
+    Kelimelerin ortasindan rastgele bolunmemesi gerekir.
+    Eger container genisligi yeterli degilse yeni satira gecilmelidir.
+    Bu metin ozellikle word wrapping algoritmasini test etmek icin
+    uzatilmistir.
+</p>
+
+<p>
+    Kisa kelimeler uzun kelimeler ve tekrar tekrar devam eden bir metin
+    burada birlikte bulunmaktadir.
+</p>
+
+<hr>
+
+<h2>4. Inline + Wrapping Testi</h2>
+
+<p>
+    Aurora
+    <b>OS</b>
+    uzerinde
+    <i>kendi</i>
+    <strong>web tarayicimizi</strong>
+    gelistiriyoruz.
+    Bu metnin icinde
+    <a href="http://example.com">bir link</a>
+    bulunuyor ve metin uzun oldugu icin satir sonunda otomatik olarak
+    yeni satira gecmesi gerekiyor.
+</p>
+
+<p>
+    Normal metin
+    <b>bold metin</b>
+    normal metin
+    <i>italic metin</i>
+    normal metin
+    <u>alt cizili metin</u>
+    normal metin.
+</p>
+
+<hr>
+
+<h2>5. Heading Test</h2>
+
+<h4>Heading H4</h4>
+<p>H4 altinda normal paragraf.</p>
+
+<h5>Heading H5</h5>
+<p>H5 altinda normal paragraf.</p>
+
+<h6>Heading H6</h6>
+<p>H6 altinda normal paragraf.</p>
+
+<hr>
+
+<h2>6. Liste Testi</h2>
+
+<h3>Unordered List</h3>
+
+<ul>
+    <li>Birinci madde</li>
+    <li>Ikinci madde</li>
+    <li>Ucuncu madde</li>
+    <li>Dorduncu madde</li>
+</ul>
+
+<h3>Ordered List</h3>
+
+<ol>
+    <li>HTML Parser</li>
+    <li>DOM</li>
+    <li>Layout Tree</li>
+    <li>Paint</li>
+    <li>Framebuffer</li>
+</ol>
+
+<hr>
+
+<h2>7. Code Test</h2>
+
+<p>
+    Normal text ile
+    <code>tcp_connect()</code>
+    ve
+    <code>gfx_draw_rect()</code>
+    fonksiyonlarini ayni satirda kullaniyoruz.
+</p>
+
+<pre>
+#include &lt;stdio.h&gt;
+
+int main(void)
+{
+    printf("Hello Aurora");
+    return 0;
+}
+</pre>
+
+<hr>
+
+<h2>8. Blockquote Test</h2>
+
+<blockquote>
+    ZeruX OS kendi TCP/IP stack'ine, VFS katmanina,
+    Aurora Browser'a ve kendi grafik altyapisina sahip
+    deneysel bir isletim sistemidir.
+</blockquote>
+
+<p>
+    Blockquote sonrasinda normal metin devam eder.
+</p>
+
+<hr>
+
+<h2>9. Description List Test</h2>
+
+<dl>
+    <dt>HTML</dt>
+    <dd>Web sayfasinin yapisini tanimlar.</dd>
+
+    <dt>DOM</dt>
+    <dd>HTML belgesinin agac yapisindaki temsilidir.</dd>
+
+    <dt>Layout</dt>
+    <dd>Elemanlarin ekrandaki konumlarini hesaplar.</dd>
+
+    <dt>Paint</dt>
+    <dd>Layout kutularini framebuffer uzerine cizer.</dd>
+</dl>
+
+<hr>
+
+<h2>10. Table Layout Test</h2>
+
+<table>
+    <caption>Aurora Sistem Bilesenleri</caption>
+
+    <thead>
+        <tr>
+            <th>Bilesen</th>
+            <th>Durum</th>
+            <th>Aciklama</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        <tr>
+            <td>HTML Parser</td>
+            <td>OK</td>
+            <td>HTML dokumanini parse ediyor</td>
+        </tr>
+
+        <tr>
+            <td>DOM</td>
+            <td>OK</td>
+            <td>Node agaci olusturuyor</td>
+        </tr>
+
+        <tr>
+            <td>Layout</td>
+            <td>v0.4</td>
+            <td>Layout Tree olusturuyor</td>
+        </tr>
+
+        <tr>
+            <td>Paint</td>
+            <td>v0.4</td>
+            <td>Kutulari framebuffer'a ciziyor</td>
+        </tr>
+
+        <tr>
+            <td>TCP</td>
+            <td>OK</td>
+            <td>HTTP baglantisi sagliyor</td>
+        </tr>
+    </tbody>
+
+    <tfoot>
+        <tr>
+            <td>Toplam</td>
+            <td>5</td>
+            <td>Aurora Browser</td>
+        </tr>
+    </tfoot>
+</table>
+
+<hr>
+
+<h2>11. Semantic HTML Test</h2>
+
+<header>
+    <h3>Site Header</h3>
+    <p>Header elemani burada.</p>
+</header>
+
+<nav>
+    <a href="http://example.com">Ana Sayfa</a>
+    <a href="http://example.com">Hakkinda</a>
+</nav>
+
+<main>
+
+    <section>
+        <h4>Ana Bolum</h4>
+
+        <article>
+            <h5>Makale Basligi</h5>
+
+            <p>
+                Article icindeki metin.
+                <b>Bold</b>,
+                <i>italic</i>
+                ve
+                <a href="http://example.com">link</a>
+                burada test ediliyor.
+            </p>
+        </article>
+    </section>
+
+    <aside>
+        Yan bilgi: Aurora Browser v0.4
+    </aside>
+
+</main>
+
+<footer>
+    Aurora Browser - ZeruX OS
+</footer>
+
+<hr>
+
+<h2>12. PNG Image Test</h2>
+
+<p>
+    Asagidaki resim yerel FAT32 dosya sisteminden yuklenmelidir.
+</p>
+
+<img src="/RESIM.PNG" width="300" height="150" alt="Aurora PNG Test Resmi">
+
+<p>
+    Resmin altinda normal metin devam ediyor.
+</p>
+
+<hr>
+
+<h2>13. Image + Text Layout Test</h2>
+
+<img src="/RESIM.PNG" width="200" height="100" alt="Kucuk Aurora Resmi">
+
+<p>
+    Resimden sonra gelen bu paragraf layout sisteminin image box'un
+    yuksekligini dikkate alip sonraki block elemanini dogru yere
+    yerlestirip yerlestirmedigini test eder.
+</p>
+
+<hr>
+
+<h2>14. Entity Test</h2>
+
+<p>
+    &lt;HTML&gt; &amp; &quot;Aurora&quot;
+    &copy;
+    &reg;
+    &trade;
+    &mdash;
+    &ndash;
+    &laquo;
+    &raquo;
+</p>
+
+<p>
+    Sayisal entity:
+    &#65;
+    &#66;
+    &#67;
+</p>
+
+<hr>
+
+<h2>15. Mixed Layout Stress Test</h2>
+
+<p>
+    ZeruX
+    <b>Operating System</b>
+    uzerinde
+    <i>Aurora Browser</i>
+    gelistiriyoruz.
+    Browser kendi
+    <strong>TCP/IP stack</strong>
+    uzerinden
+    <a href="http://example.com">HTTP istegi</a>
+    gonderiyor.
+    HTML cevaplari
+    <code>HTML Parser</code>
+    tarafindan parse ediliyor ve
+    <mark>DOM</mark>
+    haline getiriliyor.
+    Daha sonra
+    <b>Layout Tree</b>
+    olusturuluyor ve
+    <i>Paint</i>
+    asamasinda framebuffer'a ciziliyor.
+    Bu paragraf ayni zamanda word wrapping ve inline
+    formatting testidir.
+</p>
+
+<hr>
+
+<h2>16. Final Test</h2>
+
+<p>
+    Eger buraya kadar geldiysek:
+</p>
+
+<ol>
+    <li>DOM olusturuluyor.</li>
+    <li>Block layout calisiyor.</li>
+    <li>Inline layout calisiyor.</li>
+    <li>Word wrapping calisiyor.</li>
+    <li>Tablo layout calisiyor.</li>
+    <li>Semantic elementler calisiyor.</li>
+    <li>PNG image yukleniyor.</li>
+    <li>Paint tree calisiyor.</li>
+</ol>
+
+<h3>Aurora Layout Engine v0.4 Test Complete</h3>
+
+</body>
+</html>

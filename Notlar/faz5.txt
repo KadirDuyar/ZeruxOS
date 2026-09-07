@@ -1,0 +1,21 @@
+🎯 Faz 5 Planınız Üzerine Değerlendirme
+
+Genel sıralama (PCI → RTC → VBE → Mouse) mantıklı, bu sırayı onaylıyorum. Birkaç önemli teknik nokta ekliyorum:
+
+5.1 PCI Bus Tarayıcı — Sorun yok, 0xCF8/0xCFC config-space erişimi basit ve iyi belgelenmiş. Bunu ilk yapmanız doğru çünkü Faz 6'daki (ağ) gerçek NIC driver'ı da PCI taramasına bağımlı olacak.
+
+5.2 RTC/CMOS — Sorun yok, düşük riskli, hızlı kazanım.
+
+5.3 VBE/VESA Framebuffer — Burada mimari bir uyarım var:
+
+Gerçek VBE mod ayarı normalde INT 10h, AX=4F02h BIOS çağrısıyla yapılır — ama siz artık protected mode'dasınız, BIOS'a erişemezsiniz (aynı E820 sorununuz gibi). İki seçeneğiniz var:
+
+(A) Zor yol: v8086 mode / real-mode trampoline yazıp protected mode'dan BIOS'u çağırma — ciddi ek karmaşıklık.
+(B) Kolay ve QEMU için doğru yol: QEMU'nun varsayılan -vga std cihazı Bochs VBE Dispi Interface'i destekler — 0x1CE (index) / 0x1D0 (data) I/O portlarına doğrudan yazarak (BIOS'a hiç dokunmadan!) çözünürlük/bpp ayarlanır. Framebuffer'ın fiziksel adresi de sabit bir PCI BAR'dan okunur (genelde 0xE0000000 civarı, PCI taramanızla — 5.1'in burada işe yaradığı yer tam da bu). Bunu önereceğim — E820 gibi bootloader'a ek yapmanıza gerek kalmadan, kernel içinden birkaç outw ile grafik moduna geçebilirsiniz.
+Ayrıca: VGA text mode'dan (donanımsal font'u ücretsiz veren) linear framebuffer'a geçince, ekrana yazı yazmak için kendi bitmap font renderer'ınızı yazmanız gerekecek (8x16 piksel font tablosu + draw_char()). Bu adımı "5.3b" olarak ayrı bir alt adım yapın, çoğu insan bunu unutup "neden ekranda yazı yok" diye şaşırır.
+"Pencere" (window) çizimini aynı adıma sıkıştırmayın — önce put_pixel/draw_line/fill_rect gibi primitifler, sonra font renderer, en son window/UI katmanı — üç ayrı alt adım olarak planlayın.
+Eski VGA text-mode kodunuzu silmeyin, bir fallback olarak bırakın (VBE bulunamazsa/desteklenmezse diye).
+
+5.4 PS/2 Mouse — Mantıklı sırada (framebuffer'dan sonra), çünkü imleci görsel olarak çizebilmek için önce piksel çizim altyapısı lazım. Klavye sürücünüzle (IRQ1) neredeyse birebir aynı desen (IRQ12, paket birleştirme, mouse_get_packet()).
+
+Hazır olduğunuzda, önce FAT32/shell'i gerçeğe döndürmemi mi istersiniz, yoksa doğrudan Faz 5.1 (PCI tarayıcı) ile mi devam edelim?
