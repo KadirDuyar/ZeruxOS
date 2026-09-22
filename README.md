@@ -56,21 +56,22 @@ Amaç bir üretim sistemi değil; işletim sistemi kavramlarının **çalışan,
 
 ---
 
-## Ekran Görüntüleri
-
-| Masaüstü | Boot Ekranı |
-|---|---|
-| ![Masaüstü](BURADA/Masaüsüt.png) | ![Boot](BURADA/bootEkranı.jpg) |
+## 📸 Ekran Görüntüleri
 
 | Terminal | Dosya Yöneticisi |
 |---|---|
-| ![Terminal](BURADA/terminal.png) | ![Dosya Yöneticisi](BURADA/dosyaYönetici.png) |
+| ![Terminal](assets/terminal.png) | ![Dosya Yöneticisi](assets/dosya%20yönetici.png) |
+| **Terminal:** Etkileşimli komut satırı arayüzü. `help` komutu çıktısında görülebildiği üzere dosya yönetimi (`ls`, `cd`, `mkdir`, `rm`), ağ araçları (`ping`, `ifconfig`, `wget`, `tcpdump`) ve sistem yönetimi komutlarını sunar. | **Dosya Gezgini:** İşletim sisteminin kök dizin yapısını (`/run`, `/cfg`, `/app`, `/user`, `/core`, `/disk`, `/wire`, `/live`) listeleyen grafiksel dosya yöneticisi. |
 
-| Güvenlik Duvarı | Aurora Tarayıcı |
+| Güvenlik Duvarı (Kurallar) | Güvenlik Duvarı (Kural Ekleme) |
 |---|---|
-| ![Firewall](BURADA/firewall.png) | ![Aurora](BURADA/Aurora.png) |
+| ![Güvenlik Duvarı Kurallar](assets/güvenlik%20duvarı.png) | ![Güvenlik Duvarı Kural Ekleme](assets/güvenlik%20duvarı%202.png) |
+| **Güvenlik Duvarı - Kurallar Listesi:** Mevcut paket filtreleme kurallarının eylem (`DROP`), yön (`IN`), protokol (`TCP`), hedef IP/CIDR ve port detaylarıyla birlikte listelendiği yönetim ekranı. | **Güvenlik Duvarı - Kural Ekleme Formu:** Kaynak IP, MAC, Ağ Maskesi, Port aralığı, Protokol (ANY/ICMP/TCP/UDP) ve Yön (Gelen/Giden) kriterlerine göre yeni trafik engelleme veya izin verme kurallarının tanımlandığı arayüz. |
 
----
+| Aurora Tarayıcı (Arayüz) | Aurora Tarayıcı (Render Testi) |
+|---|---|
+| ![Aurora Tarayıcı Başlangıç](assets/tarayıcı-1.png) | ![Aurora Tarayıcı Render Testi](assets/tarayıcı%202.png) |
+| **Aurora Tarayıcı - Ana Ekran:** ZeruX OS üzerinde çalışan, adres çubuğu üzerinden ağ üzerindeki HTTP servislerine (`192.168.1.1:8080` vb.) erişim sağlayan hafif sıklet web tarayıcısı. | **Aurora Tarayıcı - Render Yetenekleri:** Tarayıcının metin biçimlendirme (kalın, eğik, altı/üstü çizili), listeler, kod blokları, renkli arka planlar ve köprü bağlantılarını (links) işleme yeteneğini gösteren test sayfası. |
 
 ## Özellik Matrisi
 
