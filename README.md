@@ -58,20 +58,46 @@ Amaç bir üretim sistemi değil; işletim sistemi kavramlarının **çalışan,
 
 ## 📸 Ekran Görüntüleri
 
-| Terminal | Dosya Yöneticisi |
-|---|---|
-| ![Terminal](assets/terminal.png) | ![Dosya Yöneticisi](assets/dosya%20yönetici.png) |
-| **Terminal:** Etkileşimli komut satırı arayüzü. `help` komutu çıktısında görülebildiği üzere dosya yönetimi (`ls`, `cd`, `mkdir`, `rm`), ağ araçları (`ping`, `ifconfig`, `wget`, `tcpdump`) ve sistem yönetimi komutlarını sunar. | **Dosya Gezgini:** İşletim sisteminin kök dizin yapısını (`/run`, `/cfg`, `/app`, `/user`, `/core`, `/disk`, `/wire`, `/live`) listeleyen grafiksel dosya yöneticisi. |
+### 1. Terminal
+![Terminal](assets/terminal.png)
 
-| Güvenlik Duvarı (Kurallar) | Güvenlik Duvarı (Kural Ekleme) |
-|---|---|
-| ![Güvenlik Duvarı Kurallar](assets/güvenlik%20duvarı.png) | ![Güvenlik Duvarı Kural Ekleme](assets/güvenlik%20duvarı%202.png) |
-| **Güvenlik Duvarı - Kurallar Listesi:** Mevcut paket filtreleme kurallarının eylem (`DROP`), yön (`IN`), protokol (`TCP`), hedef IP/CIDR ve port detaylarıyla birlikte listelendiği yönetim ekranı. | **Güvenlik Duvarı - Kural Ekleme Formu:** Kaynak IP, MAC, Ağ Maskesi, Port aralığı, Protokol (ANY/ICMP/TCP/UDP) ve Yön (Gelen/Giden) kriterlerine göre yeni trafik engelleme veya izin verme kurallarının tanımlandığı arayüz. |
+Etkileşimli komut satırı arayüzü. `help` komutu çıktısında görülebildiği üzere dosya yönetimi (`ls`, `cd`, `mkdir`, `rm`), ağ araçları (`ping`, `ifconfig`, `wget`, `tcpdump`) ve sistem yönetimi komutlarını sunar.
 
-| Aurora Tarayıcı (Arayüz) | Aurora Tarayıcı (Render Testi) |
-|---|---|
-| ![Aurora Tarayıcı Başlangıç](assets/tarayıcı-1.png) | ![Aurora Tarayıcı Render Testi](assets/tarayıcı%202.png) |
-| **Aurora Tarayıcı - Ana Ekran:** ZeruX OS üzerinde çalışan, adres çubuğu üzerinden ağ üzerindeki HTTP servislerine (`192.168.1.1:8080` vb.) erişim sağlayan hafif sıklet web tarayıcısı. | **Aurora Tarayıcı - Render Yetenekleri:** Tarayıcının metin biçimlendirme (kalın, eğik, altı/üstü çizili), listeler, kod blokları, renkli arka planlar ve köprü bağlantılarını (links) işleme yeteneğini gösteren test sayfası. |
+---
+
+### 2. Dosya Yöneticisi
+![Dosya Yöneticisi](assets/dosya%20y%C3%B6netici.png)
+
+İşletim sisteminin kök dizin yapısını (`/run`, `/cfg`, `/app`, `/user`, `/core`, `/disk`, `/wire`, `/live`) listeleyen grafiksel dosya yöneticisi.
+
+---
+
+### 3. Güvenlik Duvarı - Mevcut Kurallar
+![Güvenlik Duvarı Kurallar](assets/g%C3%BCvenlik%20duvar%C4%B1.png)
+
+Mevcut paket filtreleme kurallarının eylem (`DROP`), yön (`IN`), protokol (`TCP`), hedef IP/CIDR ve port detaylarıyla birlikte listelendiği yönetim ekranı.
+
+---
+
+### 4. Güvenlik Duvarı - Kural Ekleme Formu
+![Güvenlik Duvarı Kural Ekleme](assets/g%C3%BCvenlik%20duvar%C4%B1%202.png)
+
+Kaynak IP, MAC, Ağ Maskesi, Port aralığı, Protokol (ANY/ICMP/TCP/UDP) ve Yön (Gelen/Giden) kriterlerine göre yeni trafik engelleme veya izin verme kurallarının tanımlandığı arayüz.
+
+---
+
+### 5. Aurora Tarayıcı - Ana Ekran
+![Aurora Tarayıcı Ana Ekran](assets/taray%C4%B1c%C4%B1-1.png)
+
+ZeruX OS üzerinde çalışan, adres çubuğu üzerinden ağ üzerindeki HTTP servislerine (`192.168.1.1:8080` vb.) erişim sağlayan hafif sıklet web tarayıcısı.
+
+---
+
+### 6. Aurora Tarayıcı - Render Testi
+![Aurora Tarayıcı Render Testi](assets/taray%C4%B1c%C4%B1%202.png)
+
+Tarayıcının metin biçimlendirme (kalın, eğik, altı/üstü çizili), listeler, kod blokları, renkli arka planlar ve köprü bağlantılarını (links) işleme yeteneğini gösteren test sayfası.
+
 
 ## Özellik Matrisi
 
